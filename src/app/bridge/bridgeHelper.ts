@@ -2,7 +2,7 @@ import { useState, useCallback } from 'react';
 import { useAccount, useWalletClient, usePublicClient } from 'wagmi';
 import { parseUnits, formatUnits, encodeFunctionData, parseAbi, decodeEventLog, keccak256, toHex } from 'viem';
 
-// Network configurations
+// Network configurations with multiple tokens
 const NETWORK_CONFIG = {
   sepolia: {
     chainId: 11155111,
@@ -30,17 +30,48 @@ const NETWORK_CONFIG = {
   }
 };
 
-// Token addresses
+// Enhanced token addresses with more tokens
 const TOKEN_ADDRESSES = {
   sepolia: {
-    USDL: "0xB7217747Ab3592Dd5Ec3C82640b3ec6dF5D93b9D"
+    USDL: "0xB7217747Ab3592Dd5Ec3C82640b3ec6dF5D93b9D",
+    RAWL: "0x495763E3D020Fb6C2E4c29C12a7d3C5045d99dD5"
   },
   baseSepolia: {
-    USDL: "0x5087d7819270DF42c46BE3D8ddc1d1B67E7399B2"
+    USDL: "0x5087d7819270DF42c46BE3D8ddc1d1B67E7399B2",
+    RAWL: "0xd3811A60Abe06060C817Db0D82d7330255Af52D7"
   }
 };
 
-// Enhanced ABI definitions with proper error handling
+// Token mapping for cross-chain bridging
+const TOKEN_MAPPING = {
+  sepolia: {
+    USDL: { baseSepolia: "USDL" },
+    RAWL: { baseSepolia: "RAWL" }
+  },
+  baseSepolia: {
+    USDL: { sepolia: "USDL" },
+    RAWL: { sepolia: "RAWL" }
+  }
+};
+
+// Token metadata
+const TOKEN_METADATA = {
+  USDL: {
+    name: "USD Lender",
+    symbol: "USDL",
+    decimals: 18,
+    icon: "💰"
+  },
+  RAWL: {
+    name: "RAW Lender",
+    symbol: "RAWL",
+    decimals: 18,
+    icon: "🔥"
+  }
+  
+};
+
+// Enhanced ABI definitions
 const ROUTER_ABI = parseAbi([
   'struct TokenAmount { address token; uint256 amount; }',
   'struct EVM2AnyMessage { bytes receiver; bytes data; TokenAmount[] tokenAmounts; address feeToken; bytes extraArgs; }',
@@ -75,8 +106,12 @@ export enum FeeType {
 }
 
 export interface BridgeParams {
-  tokenAddress: string;
+  sourceTokenAddress: string;
+  sourceTokenSymbol: string;
+  destinationTokenAddress: string;
+  destinationTokenSymbol: string;
   amount: string;
+  sourceChain: keyof typeof NETWORK_CONFIG;
   destinationChain: keyof typeof NETWORK_CONFIG;
   receiverAddress: string;
   feeType: FeeType;
@@ -95,6 +130,14 @@ export interface TokenBalance {
   decimals: number;
   symbol: string;
   name: string;
+}
+
+export interface TokenInfo {
+  address: string;
+  symbol: string;
+  name: string;
+  decimals: number;
+  icon: string;
 }
 
 export const useBridgeHelper = () => {
@@ -128,14 +171,58 @@ export const useBridgeHelper = () => {
     console.error(`[Bridge Helper ERROR] ${message}`, error || '');
   }, []);
 
+  // Get available tokens for a specific network
+  const getAvailableTokens = useCallback((networkKey: keyof typeof NETWORK_CONFIG): TokenInfo[] => {
+    const tokens = TOKEN_ADDRESSES[networkKey];
+    return Object.entries(tokens).map(([symbol, address]) => ({
+      address,
+      symbol,
+      name: TOKEN_METADATA[symbol as keyof typeof TOKEN_METADATA]?.name || symbol,
+      decimals: TOKEN_METADATA[symbol as keyof typeof TOKEN_METADATA]?.decimals || 18,
+      icon: TOKEN_METADATA[symbol as keyof typeof TOKEN_METADATA]?.icon || "🪙"
+    }));
+  }, []);
+
+  // Get destination token for a given source token
+  const getDestinationToken = useCallback((
+    sourceTokenSymbol: string, 
+    sourceChain: keyof typeof NETWORK_CONFIG, 
+    destinationChain: keyof typeof NETWORK_CONFIG
+  ): TokenInfo | null => {
+    const mapping = TOKEN_MAPPING[sourceChain]?.[sourceTokenSymbol as keyof (typeof TOKEN_MAPPING)[typeof sourceChain]];
+    const destinationSymbol = mapping?.[destinationChain as keyof typeof mapping];
+    
+    if (!destinationSymbol) return null;
+    
+    const destinationAddress = TOKEN_ADDRESSES[destinationChain][destinationSymbol as keyof (typeof TOKEN_ADDRESSES)[typeof destinationChain]];
+    
+    if (!destinationAddress) return null;
+    
+    return {
+      address: destinationAddress,
+      symbol: destinationSymbol,
+      name: TOKEN_METADATA[destinationSymbol as keyof typeof TOKEN_METADATA]?.name || destinationSymbol,
+      decimals: TOKEN_METADATA[destinationSymbol as keyof typeof TOKEN_METADATA]?.decimals || 18,
+      icon: TOKEN_METADATA[destinationSymbol as keyof typeof TOKEN_METADATA]?.icon || "🪙"
+    };
+  }, []);
+
+  // Check if a token can be bridged to a destination chain
+  const canBridgeToken = useCallback((
+    sourceTokenSymbol: string, 
+    sourceChain: keyof typeof NETWORK_CONFIG, 
+    destinationChain: keyof typeof NETWORK_CONFIG
+  ): boolean => {
+    return !!getDestinationToken(sourceTokenSymbol, sourceChain, destinationChain);
+  }, [getDestinationToken]);
+
   const encodeExtraArgs = useCallback(() => {
     try {
-      // CCIP V2 extra args encoding - matches the test script approach
+      // CCIP V2 extra args encoding
       const functionSelector = keccak256(toHex("CCIP EVMExtraArgsV2")).slice(0, 10);
-      const gasLimit = 0n; // No gas limit for token-only transfers
+      const gasLimit = 0n;
       const allowOutOfOrderExecution = true;
       
-      // Encode the extra args using ABI encoding
       const encodedArgs = encodeFunctionData({
         abi: parseAbi(['function encode(uint256 gasLimit, bool allowOutOfOrderExecution) returns (bytes)']),
         functionName: 'encode',
@@ -208,13 +295,14 @@ export const useBridgeHelper = () => {
     }
 
     try {
-      const sourceNetwork = chain?.id === NETWORK_CONFIG.sepolia.chainId ? 'sepolia' : 'baseSepolia';
-      const sourceConfig = NETWORK_CONFIG[sourceNetwork];
+      const sourceConfig = NETWORK_CONFIG[params.sourceChain];
       const destinationConfig = NETWORK_CONFIG[params.destinationChain];
 
       log('Estimating fee for bridge:', {
-        sourceNetwork,
+        sourceChain: params.sourceChain,
         destinationChain: params.destinationChain,
+        sourceToken: params.sourceTokenSymbol,
+        destinationToken: params.destinationTokenSymbol,
         amount: params.amount,
         feeType: params.feeType
       });
@@ -223,19 +311,21 @@ export const useBridgeHelper = () => {
         ? '0x0000000000000000000000000000000000000000' 
         : sourceConfig.link;
 
+      // Get token decimals for proper amount parsing
+      const sourceTokenDecimals = TOKEN_METADATA[params.sourceTokenSymbol as keyof typeof TOKEN_METADATA]?.decimals || 18;
+
       const tokenAmounts = [
         {
-          token: params.tokenAddress as `0x${string}`,
-          amount: parseUnits(params.amount, 18)
+          token: params.sourceTokenAddress as `0x${string}`,
+          amount: parseUnits(params.amount, sourceTokenDecimals)
         }
       ];
 
-      // Use proper ABI encoding for receiver address (matches test script)
       const receiverEncoded = encodeFunctionData({
         abi: parseAbi(['function encode(address) returns (bytes)']),
         functionName: 'encode',
         args: [params.receiverAddress as `0x${string}`]
-      }).slice(10); // Remove function selector
+      }).slice(10);
 
       const message = {
         receiver: ('0x' + receiverEncoded) as `0x${string}`,
@@ -265,7 +355,7 @@ export const useBridgeHelper = () => {
       logError('Error estimating fee:', error);
       throw error;
     }
-  }, [publicClient, address, chain, encodeExtraArgs, log, logError]);
+  }, [publicClient, address, encodeExtraArgs, log, logError]);
 
   const checkAllowance = useCallback(async (tokenAddress: string, spenderAddress: string) => {
     if (!publicClient || !address) {
@@ -330,22 +420,23 @@ export const useBridgeHelper = () => {
     setBridgeStatus(prev => ({ ...prev, isLoading: true, error: null }));
 
     try {
-      const sourceNetwork = chain?.id === NETWORK_CONFIG.sepolia.chainId ? 'sepolia' : 'baseSepolia';
-      const sourceConfig = NETWORK_CONFIG[sourceNetwork];
+      const sourceConfig = NETWORK_CONFIG[params.sourceChain];
       const destinationConfig = NETWORK_CONFIG[params.destinationChain];
 
       log('Starting bridge transaction:', {
-        sourceNetwork,
+        sourceChain: params.sourceChain,
         destinationChain: params.destinationChain,
+        sourceToken: params.sourceTokenSymbol,
+        destinationToken: params.destinationTokenSymbol,
         amount: params.amount,
-        tokenAddress: params.tokenAddress,
+        sourceTokenAddress: params.sourceTokenAddress,
+        destinationTokenAddress: params.destinationTokenAddress,
         receiverAddress: params.receiverAddress,
         feeType: params.feeType
       });
-
       // Check token balance before bridging
-      const tokenBalance = await getTokenBalance(params.tokenAddress, address, sourceConfig);
-      log('Source token balance:', tokenBalance);
+      const sourceTokenBalance = await getTokenBalance(params.sourceTokenAddress, address, sourceConfig);
+      log('Source token balance:', sourceTokenBalance);
 
       // Check destination token balance
       if (params.destinationChain === 'baseSepolia') {
@@ -373,33 +464,23 @@ export const useBridgeHelper = () => {
         throw new Error(`Destination chain ${params.destinationChain} is not supported`);
       }
 
-      log('Destination chain is supported');
+      // Get token decimals and parse amount
+      const sourceTokenDecimals = TOKEN_METADATA[params.sourceTokenSymbol as keyof typeof TOKEN_METADATA]?.decimals || 18;
+      const amount = parseUnits(params.amount, sourceTokenDecimals);
 
-      const amount = parseUnits(params.amount, 18);
-      const feeTokenAddress = params.feeType === FeeType.NATIVE 
-        ? '0x0000000000000000000000000000000000000000' 
-        : sourceConfig.link;
-
-      // Check if user has enough tokens - compare in wei
-      const balanceInWei = parseUnits(tokenBalance.balance, tokenBalance.decimals);
-      if (balanceInWei < amount) {
-        throw new Error(`Insufficient token balance. Required: ${formatUnits(amount, 18)}, Available: ${tokenBalance.balance}`);
-      }
       
-      log('Token balance check passed:', {
-        required: formatUnits(amount, 18),
-        available: tokenBalance.balance,
-        balanceInWei: balanceInWei.toString(),
-        amountInWei: amount.toString()
-      });
+      const balanceInWei = parseUnits(sourceTokenBalance.balance, sourceTokenBalance.decimals);
+      
+      if (balanceInWei < amount) {
+        throw new Error(`Insufficient ${params.sourceTokenSymbol} balance. Required: ${formatUnits(amount, sourceTokenDecimals)}, Available: ${sourceTokenBalance.balance}`);
+      }
 
       // Check and approve token allowance
-      const currentAllowance = await checkAllowance(params.tokenAddress, sourceConfig.router);
+      const currentAllowance = await checkAllowance(params.sourceTokenAddress, sourceConfig.router);
       if (currentAllowance < amount) {
         log('Approving token allowance...');
-        const approveHash = await approveToken(params.tokenAddress, sourceConfig.router, amount);
+        const approveHash = await approveToken(params.sourceTokenAddress, sourceConfig.router, amount);
         
-        // Wait for approval confirmation
         const approvalReceipt = await publicClient.waitForTransactionReceipt({ 
           hash: approveHash,
           confirmations: sourceConfig.confirmations
@@ -407,14 +488,14 @@ export const useBridgeHelper = () => {
         log('Token approval confirmed:', approvalReceipt.transactionHash);
       }
 
-      // If using LINK for fees, check and approve LINK allowance
+      // Handle fee token approval if using LINK
       let estimatedFee: bigint;
       if (params.feeType === FeeType.LINK) {
         estimatedFee = await estimateFee(params);
         
-        // Check LINK balance - compare in wei
         const linkBalance = await getTokenBalance(sourceConfig.link, address, sourceConfig);
         const linkBalanceInWei = parseUnits(linkBalance.balance, linkBalance.decimals);
+        
         if (linkBalanceInWei < estimatedFee) {
           throw new Error(`Insufficient LINK balance. Required: ${formatUnits(estimatedFee, 18)}, Available: ${linkBalance.balance}`);
         }
@@ -427,7 +508,6 @@ export const useBridgeHelper = () => {
         });
 
         const linkAllowance = await checkAllowance(sourceConfig.link, sourceConfig.router);
-        
         if (linkAllowance < estimatedFee) {
           log('Approving LINK token allowance...');
           const approveLinkHash = await approveToken(sourceConfig.link, sourceConfig.router, estimatedFee);
@@ -442,20 +522,23 @@ export const useBridgeHelper = () => {
         estimatedFee = await estimateFee(params);
       }
 
-      // Prepare the message - use proper encoding matching test script
+      // Prepare the message
+      const feeTokenAddress = params.feeType === FeeType.NATIVE 
+        ? '0x0000000000000000000000000000000000000000' 
+        : sourceConfig.link;
+
       const tokenAmounts = [
         {
-          token: params.tokenAddress as `0x${string}`,
+          token: params.sourceTokenAddress as `0x${string}`,
           amount: amount
         }
       ];
 
-      // Encode receiver address properly
       const receiverEncoded = encodeFunctionData({
         abi: parseAbi(['function encode(address) returns (bytes)']),
         functionName: 'encode',
         args: [params.receiverAddress as `0x${string}`]
-      }).slice(10); // Remove function selector
+      }).slice(10);
 
       const message = {
         receiver: ('0x' + receiverEncoded) as `0x${string}`,
@@ -467,30 +550,21 @@ export const useBridgeHelper = () => {
 
       log('Final message for CCIP send:', message);
 
-      // Simulate the transaction first
-      try {
-        const value = params.feeType === FeeType.NATIVE ? estimatedFee : 0n;
-        
-        await publicClient.simulateContract({
-          address: sourceConfig.router as `0x${string}`,
-          abi: ROUTER_ABI,
-          functionName: 'ccipSend',
-          args: [BigInt(destinationConfig.chainSelector), message],
-          value: value,
-          account: address
-        });
-
-        log('Transaction simulation successful');
-      } catch (simulationError) {
-        logError('Transaction simulation failed:', simulationError);
-        throw new Error(`Transaction simulation failed: ${simulationError}`);
-      }
-
-      // Send the CCIP message
+      // Simulate the transaction
       const value = params.feeType === FeeType.NATIVE ? estimatedFee : 0n;
       
-      log('Sending CCIP transaction with value:', value.toString());
-      
+      await publicClient.simulateContract({
+        address: sourceConfig.router as `0x${string}`,
+        abi: ROUTER_ABI,
+        functionName: 'ccipSend',
+        args: [BigInt(destinationConfig.chainSelector), message],
+        value: value,
+        account: address
+      });
+
+      log('Transaction simulation successful');
+
+      // Send the CCIP message
       const hash = await walletClient.writeContract({
         address: sourceConfig.router as `0x${string}`,
         abi: ROUTER_ABI,
@@ -529,17 +603,11 @@ export const useBridgeHelper = () => {
             });
             
             messageId = decodedLog.args.messageId;
-            console.log('Found CCIP message ID:', messageId);
             break;
           }
         } catch (error) {
-          // Continue to next log if decoding fails
           continue;
         }
-      }
-
-      if (!messageId) {
-        logError('Could not find message ID in transaction logs');
       }
 
       setBridgeStatus({
@@ -553,6 +621,8 @@ export const useBridgeHelper = () => {
       log('Bridge transaction completed successfully:', {
         txHash: hash,
         messageId,
+        sourceToken: params.sourceTokenSymbol,
+        destinationToken: params.destinationTokenSymbol,
         ccipExplorer: messageId ? `https://ccip.chain.link/msg/${messageId}` : `https://ccip.chain.link/tx/${hash}`
       });
 
@@ -570,26 +640,50 @@ export const useBridgeHelper = () => {
       });
       throw error;
     }
-  }, [walletClient, publicClient, address, chain, checkAllowance, approveToken, estimateFee, encodeExtraArgs, getTokenBalance, log, logError]);
+  }, [walletClient, publicClient, address, checkAllowance, approveToken, estimateFee, encodeExtraArgs, getTokenBalance, log, logError]);
 
-  const getUSDLBalance = useCallback(async (network: keyof typeof NETWORK_CONFIG, userAddress: string) => {
-    if (!publicClient) {
-      throw new Error('Public client not available');
-    }
+  // const getTokenBalance = useCallback(async (tokenAddress: string, userAddress: string, networkConfig: any) => {
+  //   if (!publicClient) {
+  //     throw new Error('Public client not available');
+  //   }
 
-    try {
-      const tokenAddress = TOKEN_ADDRESSES[network]?.USDL;
-      if (!tokenAddress) {
-        throw new Error(`USDL token address not found for network: ${network}`);
-      }
+  //   try {
+  //     const [balance, decimals, symbol, name] = await Promise.all([
+  //       publicClient.readContract({
+  //         address: tokenAddress as `0x${string}`,
+  //         abi: ERC20_ABI,
+  //         functionName: 'balanceOf',
+  //         args: [userAddress as `0x${string}`]
+  //       }),
+  //       publicClient.readContract({
+  //         address: tokenAddress as `0x${string}`,
+  //         abi: ERC20_ABI,
+  //         functionName: 'decimals'
+  //       }),
+  //       publicClient.readContract({
+  //         address: tokenAddress as `0x${string}`,
+  //         abi: ERC20_ABI,
+  //         functionName: 'symbol'
+  //       }),
+  //       publicClient.readContract({
+  //         address: tokenAddress as `0x${string}`,
+  //         abi: ERC20_ABI,
+  //         functionName: 'name'
+  //       })
+  //     ]);
 
-      const balance = await getTokenBalance(tokenAddress, userAddress, NETWORK_CONFIG[network]);
-      return balance;
-    } catch (error) {
-      logError(`Error getting USDL balance on ${network}:`, error);
-      throw error;
-    }
-  }, [publicClient, getTokenBalance, logError]);
+  //     const formattedBalance = formatUnits(balance, decimals);
+  //     return {
+  //       balance: formattedBalance,
+  //       decimals,
+  //       symbol,
+  //       name
+  //     };
+  //   } catch (error) {
+  //     logError('Error getting token balance:', error);
+  //     throw error;
+  //   }
+  // }, [publicClient, logError]);
 
   return {
     bridgeTokens,
@@ -598,6 +692,11 @@ export const useBridgeHelper = () => {
     resetStatus,
     checkAllowance,
     getTokenBalance,
-    getUSDLBalance
+    getAvailableTokens,
+    getDestinationToken,
+    canBridgeToken,
+    TOKEN_METADATA,
+    TOKEN_ADDRESSES,
+    NETWORK_CONFIG
   };
 };
