@@ -1,8 +1,8 @@
 "use client";
 import React, { useState, useEffect } from "react";
-import { useAccount, useBalance, useSwitchChain } from 'wagmi';
-import { formatEther, parseEther } from 'viem';
-import { useBridgeHelper, FeeType, BridgeParams} from "./bridgeHelper";
+import { useAccount, useBalance, useSwitchChain } from "wagmi";
+import { formatEther, parseEther } from "viem";
+import { useBridgeHelper, FeeType, BridgeParams } from "./bridgeHelper";
 import { toast } from "react-toastify";
 
 // Updated network configurations to match bridgeHelper
@@ -11,35 +11,35 @@ const NETWORKS = {
     id: 11155111,
     name: "Sepolia",
     chainId: 11155111,
-    key: "sepolia" as const
+    key: "sepolia" as const,
   },
   baseSepolia: {
     id: 84532,
-    name: "Base Sepolia", 
+    name: "Base Sepolia",
     chainId: 84532,
-    key: "baseSepolia" as const
+    key: "baseSepolia" as const,
   }
 } as const;
 
 // Define the network type
-type NetworkType = typeof NETWORKS[keyof typeof NETWORKS];
+type NetworkType = (typeof NETWORKS)[keyof typeof NETWORKS];
 
 const Bridge = () => {
   const { address, chain } = useAccount();
   const { switchChain } = useSwitchChain();
-  const { 
-    bridgeTokens, 
-    estimateFee, 
-    bridgeStatus, 
-    resetStatus, 
-    getAvailableTokens, 
-    getDestinationToken, 
+  const {
+    bridgeTokens,
+    estimateFee,
+    bridgeStatus,
+    resetStatus,
+    getAvailableTokens,
+    getDestinationToken,
     canBridgeToken,
     TOKEN_METADATA,
     TOKEN_ADDRESSES,
-    NETWORK_CONFIG
+    NETWORK_CONFIG,
   } = useBridgeHelper();
-  
+
   // State management
   const [fromNetwork, setFromNetwork] = useState<NetworkType>(NETWORKS.sepolia);
   const [toNetwork, setToNetwork] = useState<NetworkType>(NETWORKS.baseSepolia);
@@ -56,11 +56,11 @@ const Bridge = () => {
   const [isFeeEstimating, setIsFeeEstimating] = useState(false);
 
   // Get source token balance
-  const { 
-    data: sourceTokenBalance, 
+  const {
+    data: sourceTokenBalance,
     isLoading: sourceBalanceLoading,
     error: sourceBalanceError,
-    refetch: refetchSourceBalance
+    refetch: refetchSourceBalance,
   } = useBalance({
     address: address,
     token: selectedToken?.address as `0x${string}`,
@@ -72,11 +72,11 @@ const Bridge = () => {
   });
 
   // Get destination token balance
-  const { 
+  const {
     data: destinationTokenBalance,
     isLoading: destinationBalanceLoading,
     error: destinationBalanceError,
-    refetch: refetchDestinationBalance
+    refetch: refetchDestinationBalance,
   } = useBalance({
     address: address,
     token: destinationToken?.address as `0x${string}`,
@@ -90,14 +90,17 @@ const Bridge = () => {
   // Load available tokens when network changes
   useEffect(() => {
     console.log("🔄 Loading tokens for network:", fromNetwork.key);
-    
+
     try {
       const tokens = getAvailableTokens(fromNetwork.key);
       console.log("📋 Available tokens:", tokens);
       setAvailableTokens(tokens);
-      
+
       // Set first token as default if no token selected or current token not available
-      if (!selectedToken || !tokens.find(t => t.symbol === selectedToken.symbol)) {
+      if (
+        !selectedToken ||
+        !tokens.find((t) => t.symbol === selectedToken.symbol)
+      ) {
         console.log("🎯 Setting default token:", tokens[0]);
         setSelectedToken(tokens[0] || null);
       }
@@ -112,10 +115,14 @@ const Bridge = () => {
     if (selectedToken) {
       console.log("🔄 Updating destination token for:", selectedToken.symbol);
       try {
-        const destToken = getDestinationToken(selectedToken.symbol, fromNetwork.key, toNetwork.key);
+        const destToken = getDestinationToken(
+          selectedToken.symbol,
+          fromNetwork.key,
+          toNetwork.key
+        );
         console.log("🎯 Destination token:", destToken);
         setDestinationToken(destToken);
-        
+
         // Clear amounts if token can't be bridged
         if (!destToken) {
           setSendAmount("");
@@ -139,8 +146,22 @@ const Bridge = () => {
     console.log("Available Tokens:", availableTokens);
     console.log("Source Balance:", sourceTokenBalance);
     console.log("Destination Balance:", destinationTokenBalance);
-    console.log("Can Bridge:", selectedToken ? canBridgeToken(selectedToken.symbol, fromNetwork.key, toNetwork.key) : false);
-  }, [fromNetwork, toNetwork, selectedToken, destinationToken, availableTokens, sourceTokenBalance, destinationTokenBalance, canBridgeToken]);
+    console.log(
+      "Can Bridge:",
+      selectedToken
+        ? canBridgeToken(selectedToken.symbol, fromNetwork.key, toNetwork.key)
+        : false
+    );
+  }, [
+    fromNetwork,
+    toNetwork,
+    selectedToken,
+    destinationToken,
+    availableTokens,
+    sourceTokenBalance,
+    destinationTokenBalance,
+    canBridgeToken,
+  ]);
 
   // Refetch balances when networks or tokens change
   useEffect(() => {
@@ -148,22 +169,39 @@ const Bridge = () => {
       refetchSourceBalance();
       refetchDestinationBalance();
     }
-  }, [fromNetwork, toNetwork, selectedToken, destinationToken, address, refetchSourceBalance, refetchDestinationBalance]);
+  }, [
+    fromNetwork,
+    toNetwork,
+    selectedToken,
+    destinationToken,
+    address,
+    refetchSourceBalance,
+    refetchDestinationBalance,
+  ]);
 
   // Close all dropdowns when clicking outside
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       const target = event.target as HTMLElement;
-      if (!target.closest('.dropdown')) {
+      if (!target.closest(".dropdown")) {
         setIsFromDropdownOpen(false);
         setIsToDropdownOpen(false);
         setIsTokenDropdownOpen(false);
       }
     };
 
-    document.addEventListener('click', handleClickOutside);
-    return () => document.removeEventListener('click', handleClickOutside);
+    document.addEventListener("click", handleClickOutside);
+    return () => document.removeEventListener("click", handleClickOutside);
   }, []);
+
+  // Show toast warning when network doesn't match
+  useEffect(() => {
+    if (address && chain?.id && chain.id !== fromNetwork.chainId) {
+      toast.warning(
+        `Please switch to ${fromNetwork.name} network to proceed with the bridge`
+      );
+    }
+  }, [address, chain?.id, fromNetwork.chainId, fromNetwork.name]);
 
   // Handle network swap
   const handleNetworkSwap = () => {
@@ -219,7 +257,14 @@ const Bridge = () => {
   // Estimate fee when amount changes
   useEffect(() => {
     const estimateBridgeFee = async () => {
-      if (!sendAmount || !address || !selectedToken || !destinationToken || parseFloat(sendAmount) <= 0) {
+      if (
+        !sendAmount ||
+        !address ||
+        !selectedToken ||
+        !destinationToken ||
+        parseFloat(sendAmount) <= 0 ||
+        chain?.id !== fromNetwork.chainId
+      ) {
         setEstimatedFee("");
         return;
       }
@@ -235,13 +280,13 @@ const Bridge = () => {
           sourceChain: fromNetwork.key,
           destinationChain: toNetwork.key,
           receiverAddress: address,
-          feeType: feeType
+          feeType: feeType,
         };
 
         const fee = await estimateFee(bridgeParams);
         setEstimatedFee(formatEther(fee));
       } catch (error) {
-        console.error('Error estimating fee:', error);
+        console.error("Error estimating fee:", error);
         setEstimatedFee("Error");
       } finally {
         setIsFeeEstimating(false);
@@ -250,7 +295,17 @@ const Bridge = () => {
 
     const debounceTimer = setTimeout(estimateBridgeFee, 500);
     return () => clearTimeout(debounceTimer);
-  }, [sendAmount, address, selectedToken, destinationToken, fromNetwork, toNetwork, feeType, estimateFee]);
+  }, [
+    sendAmount,
+    address,
+    selectedToken,
+    destinationToken,
+    fromNetwork,
+    toNetwork,
+    feeType,
+    estimateFee,
+    chain?.id,
+  ]);
 
   // Handle bridge transaction
   const handleBridge = async () => {
@@ -270,7 +325,9 @@ const Bridge = () => {
     }
 
     if (!canBridgeToken(selectedToken.symbol, fromNetwork.key, toNetwork.key)) {
-      toast.warning(`${selectedToken.symbol} cannot be bridged to ${toNetwork.name}`);
+      toast.warning(
+        `${selectedToken.symbol} cannot be bridged to ${toNetwork.name}`
+      );
       return;
     }
 
@@ -298,19 +355,23 @@ const Bridge = () => {
         sourceChain: fromNetwork.key,
         destinationChain: toNetwork.key,
         receiverAddress: address,
-        feeType: feeType
+        feeType: feeType,
       };
 
       const result = await bridgeTokens(bridgeParams);
-      
+
       if (result.messageId) {
         toast.success(`Bridge successful! Message ID: ${result.messageId}`);
       } else {
         toast.success(`Bridge transaction sent! Hash: ${result.hash}`);
       }
     } catch (error) {
-      console.error('Bridge failed:', error);
-      toast.error(`Bridge failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      console.error("Bridge failed:", error);
+      toast.error(
+        `Bridge failed: ${
+          error instanceof Error ? error.message : "Unknown error"
+        }`
+      );
     }
   };
 
@@ -318,19 +379,21 @@ const Bridge = () => {
   const formatBalance = (balance: any) => {
     if (!balance) return "0.0000";
     try {
-      return (Number(balance.value) / Math.pow(10, balance.decimals)).toFixed(4);
+      return (Number(balance.value) / Math.pow(10, balance.decimals)).toFixed(
+        4
+      );
     } catch (error) {
       console.error("Error formatting balance:", error);
       return "0.0000";
     }
   };
 
-  const NetworkDropdown = ({ 
-    isOpen, 
-    setIsOpen, 
-    selectedNetwork, 
-    onSelect, 
-    excludeNetwork 
+  const NetworkDropdown = ({
+    isOpen,
+    setIsOpen,
+    selectedNetwork,
+    onSelect,
+    excludeNetwork,
   }: {
     isOpen: boolean;
     setIsOpen: (open: boolean) => void;
@@ -355,34 +418,34 @@ const Bridge = () => {
         <div className="absolute top-full right-0 mt-1 bg-white rounded-lg shadow-lg border z-50 min-w-[200px]">
           <div className="py-1">
             {Object.values(NETWORKS)
-              .filter(network => network.id !== excludeNetwork?.id)
+              .filter((network) => network.id !== excludeNetwork?.id)
               .map((network) => (
-              <div key={network.id}>
-                <button 
-                  type="button"
-                  onClick={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    console.log("Network option clicked:", network.name);
-                    onSelect(network);
-                  }}
-                  className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 cursor-pointer focus:outline-none focus:bg-gray-100"
-                >
-                  {network.name}
-                </button>
-              </div>
-            ))}
+                <div key={network.id}>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      console.log("Network option clicked:", network.name);
+                      onSelect(network);
+                    }}
+                    className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 cursor-pointer focus:outline-none focus:bg-gray-100"
+                  >
+                    {network.name}
+                  </button>
+                </div>
+              ))}
           </div>
         </div>
       )}
     </div>
   );
 
-  const TokenDropdown = ({ 
-    isOpen, 
-    setIsOpen, 
-    selectedToken, 
-    onSelect 
+  const TokenDropdown = ({
+    isOpen,
+    setIsOpen,
+    selectedToken,
+    onSelect,
   }: {
     isOpen: boolean;
     setIsOpen: (open: boolean) => void;
@@ -416,10 +479,14 @@ const Bridge = () => {
           <div className="py-1">
             {availableTokens.length > 0 ? (
               availableTokens.map((token) => {
-                const canBridge = canBridgeToken(token.symbol, fromNetwork.key, toNetwork.key);
+                const canBridge = canBridgeToken(
+                  token.symbol,
+                  fromNetwork.key,
+                  toNetwork.key
+                );
                 return (
                   <div key={token.symbol}>
-                    <button 
+                    <button
                       type="button"
                       onClick={(e) => {
                         e.preventDefault();
@@ -427,15 +494,23 @@ const Bridge = () => {
                         console.log("🎯 Token clicked:", token);
                         onSelect(token);
                       }}
-                      className={`w-full text-left px-4 py-2 text-sm hover:bg-gray-100 cursor-pointer focus:outline-none focus:bg-gray-100 ${!canBridge ? 'opacity-50' : ''}`}
+                      className={`w-full text-left px-4 py-2 text-sm hover:bg-gray-100 cursor-pointer focus:outline-none focus:bg-gray-100 ${
+                        !canBridge ? "opacity-50" : ""
+                      }`}
                     >
                       <div className="flex items-center gap-2">
                         <span>{token.icon}</span>
                         <div>
-                          <div className="font-medium text-gray-900">{token.symbol}</div>
-                          <div className="text-xs text-gray-500">{token.name}</div>
+                          <div className="font-medium text-gray-900">
+                            {token.symbol}
+                          </div>
+                          <div className="text-xs text-gray-500">
+                            {token.name}
+                          </div>
                           {!canBridge && (
-                            <div className="text-xs text-red-500">Not bridgeable</div>
+                            <div className="text-xs text-red-500">
+                              Not bridgeable
+                            </div>
                           )}
                         </div>
                       </div>
@@ -461,9 +536,9 @@ const Bridge = () => {
         type="button"
         onClick={() => setFeeType(FeeType.NATIVE)}
         className={`px-3 py-1 rounded text-xs ${
-          feeType === FeeType.NATIVE 
-            ? 'bg-blue-500 text-white' 
-            : 'bg-gray-200 text-gray-700'
+          feeType === FeeType.NATIVE
+            ? "bg-blue-500 text-white"
+            : "bg-gray-200 text-gray-700"
         }`}
       >
         Native ETH
@@ -472,9 +547,9 @@ const Bridge = () => {
         type="button"
         onClick={() => setFeeType(FeeType.LINK)}
         className={`px-3 py-1 rounded text-xs ${
-          feeType === FeeType.LINK 
-            ? 'bg-blue-500 text-white' 
-            : 'bg-gray-200 text-gray-700'
+          feeType === FeeType.LINK
+            ? "bg-blue-500 text-white"
+            : "bg-gray-200 text-gray-700"
         }`}
       >
         LINK
@@ -483,7 +558,10 @@ const Bridge = () => {
   );
 
   // Check if bridging is possible
-  const isBridgingPossible = selectedToken && destinationToken && canBridgeToken(selectedToken.symbol, fromNetwork.key, toNetwork.key);
+  const isBridgingPossible =
+    selectedToken &&
+    destinationToken &&
+    canBridgeToken(selectedToken.symbol, fromNetwork.key, toNetwork.key);
 
   return (
     <>
@@ -499,24 +577,24 @@ const Bridge = () => {
                         {/* Bridge Status */}
                         {bridgeStatus.isLoading && (
                           <div className="p-3 bg-blue-100 rounded-lg text-blue-800">
-                            <p className="m-0 text-sm">Processing bridge transaction...</p>
+                            <p className="m-0 text-sm">
+                              Processing bridge transaction...
+                            </p>
                           </div>
                         )}
-                        
-                        {bridgeStatus.error && (
-                          <div className="p-3 bg-red-100 rounded-lg text-red-800">
-                            <p className="m-0 text-sm">Error: {bridgeStatus.error}</p>
-                          </div>
-                        )}
-                        
+
                         {bridgeStatus.success && (
                           <div className="p-3 bg-green-100 rounded-lg text-green-800">
                             <p className="m-0 text-sm">Bridge successful!</p>
                             {bridgeStatus.messageId && (
-                              <p className="m-0 text-xs mt-1">Message ID: {bridgeStatus.messageId}</p>
+                              <p className="m-0 text-xs mt-1">
+                                Message ID: {bridgeStatus.messageId}
+                              </p>
                             )}
                             {bridgeStatus.txHash && (
-                              <p className="m-0 text-xs mt-1">Transaction: {bridgeStatus.txHash}</p>
+                              <p className="m-0 text-xs mt-1">
+                                Transaction: {bridgeStatus.txHash}
+                              </p>
                             )}
                           </div>
                         )}
@@ -545,12 +623,15 @@ const Bridge = () => {
                                 type="text"
                                 placeholder="0.000"
                                 value={sendAmount}
-                                onChange={(e) => handleSendAmountChange(e.target.value)}
+                                onChange={(e) =>
+                                  handleSendAmountChange(e.target.value)
+                                }
                                 className="border-0 p-0 max-w-[200px] text-2xl bg-transparent p-0 outline-0 text-white placeholder:text-white"
                               />
                               {sourceTokenBalance && (
                                 <p className="m-0 text-xs text-gray-400 mt-1">
-                                  Balance: {formatBalance(sourceTokenBalance)} {selectedToken?.symbol}
+                                  Balance: {formatBalance(sourceTokenBalance)}{" "}
+                                  {selectedToken?.symbol}
                                 </p>
                               )}
                             </div>
@@ -565,11 +646,10 @@ const Bridge = () => {
                           </div>
                         </div>
 
-                        
                         {/* Swap Button */}
                         <div className="">
                           <div className="text-right">
-                            <button 
+                            <button
                               type="button"
                               className="inline-flex items-center justify-center bg-[rgba(6,7,8,0.3)] rounded-[5px] p-2 hover:bg-[rgba(6,7,8,0.5)] transition-colors"
                               onClick={handleNetworkSwap}
@@ -608,7 +688,9 @@ const Bridge = () => {
                               />
                               {destinationTokenBalance && (
                                 <p className="m-0 text-xs text-gray-400 mt-1">
-                                  Balance: {formatBalance(destinationTokenBalance)} {destinationToken?.symbol}
+                                  Balance:{" "}
+                                  {formatBalance(destinationTokenBalance)}{" "}
+                                  {destinationToken?.symbol}
                                 </p>
                               )}
                             </div>
@@ -636,10 +718,15 @@ const Bridge = () => {
                               Bridge Fee <span className="icn">{infoIcn}</span>
                             </p>
                             <p className="m-0 flex items-center gap-2 text-xs">
-                              {isFeeEstimating ? (
+                              {chain?.id !== fromNetwork.chainId ? (
+                                <span>Switch network to estimate</span>
+                              ) : isFeeEstimating ? (
                                 <span>Estimating...</span>
                               ) : estimatedFee ? (
-                                <span>{Number(estimatedFee).toFixed(6)} {feeType === FeeType.NATIVE ? 'ETH' : 'LINK'}</span>
+                                <span>
+                                  {Number(estimatedFee).toFixed(6)}{" "}
+                                  {feeType === FeeType.NATIVE ? "ETH" : "LINK"}
+                                </span>
                               ) : (
                                 <span>-</span>
                               )}
@@ -667,20 +754,28 @@ const Bridge = () => {
 
                       {/* Bridge Button */}
                       <div className="btnWrpper">
-                        <button 
+                        <button
                           type="button"
                           className="flex w-full items-center justify-center gap-3 h-[50px] rounded-[10px] bg-white text-[#000] transition duration-[400ms] font-medium px-4 min-w-[100px] border-[2px] border-white hover:bg-transparent hover:text-white disabled:opacity-50 disabled:cursor-not-allowed"
                           onClick={handleBridge}
-                          disabled={!address || !sendAmount || parseFloat(sendAmount) <= 0 || !isBridgingPossible || bridgeStatus.isLoading}
-                        >
-                          {!address ? 
-                            "Connect Wallet" : 
-                            !isBridgingPossible ? 
-                              "Token Not Bridgeable" : 
-                              bridgeStatus.isLoading ? 
-                                "Processing..." : 
-                                "Bridge Tokens"
+                          disabled={
+                            !address ||
+                            !sendAmount ||
+                            parseFloat(sendAmount) <= 0 ||
+                            !isBridgingPossible ||
+                            bridgeStatus.isLoading ||
+                            chain?.id !== fromNetwork.chainId
                           }
+                        >
+                          {!address
+                            ? "Connect Wallet"
+                            : chain?.id !== fromNetwork.chainId
+                            ? `Switch to ${fromNetwork.name}`
+                            : !isBridgingPossible
+                            ? "Token Not Bridgeable"
+                            : bridgeStatus.isLoading
+                            ? "Processing..."
+                            : "Bridge Tokens"}
                         </button>
                       </div>
                     </div>
