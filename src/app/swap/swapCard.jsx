@@ -1,13 +1,223 @@
 import { useAppKit } from "@reown/appkit/react";
-import React from "react";
-import { useAccount } from "wagmi";
+import React, { useState } from "react";
+import { useAccount, useBalance, useChainId, useWriteContract, useWaitForTransactionReceipt } from "wagmi";
+import { getContractAddress } from "../../config/contract";
+import { parseUnits, formatUnits } from "viem";
+import { BOOTSTRAP_ABI, ERC20_ABI } from "@/abi";
 
 const SwapCard = () => {
   const { open } = useAppKit();
   const { address, isConnected } = useAccount();
+  const chainId = useChainId();
+  const [usdcAmount, setUsdcAmount] = useState("");
+  const [usdlAmount, setUsdlAmount] = useState("");
+  const [isApproving, setIsApproving] = useState(false);
+  const [isBuying, setIsBuying] = useState(false);
+  const [transactionStep, setTransactionStep] = useState(""); // "approving", "buying", "success", "error"
+
+  // Get contract addresses for current network
+  const USDC_ADDRESS = getContractAddress(chainId, "USDC");
+  const USDL_ADDRESS = getContractAddress(chainId, "USDL");
+  const BOOTSTRAP_ADDRESS = getContractAddress(chainId, "BOOTSTRAP"); // You'll need to add this to your config
+
+  // Contract write hooks
+  const { writeContract: writeApprove, data: approveHash } = useWriteContract();
+  const { writeContract: writeBuy, data: buyHash } = useWriteContract();
+
+  // Transaction receipt hooks
+  const { isLoading: isApproveLoading, isSuccess: isApproveSuccess } = useWaitForTransactionReceipt({
+    hash: approveHash,
+  });
+
+  const { isLoading: isBuyLoading, isSuccess: isBuySuccess } = useWaitForTransactionReceipt({
+    hash: buyHash,
+  });
+
+  // Get USDC balance
+  const {
+    data: usdcBalance,
+    isLoading: usdcBalanceLoading,
+    error: usdcBalanceError,
+    refetch: refetchUsdcBalance,
+  } = useBalance({
+    address: address,
+    token: USDC_ADDRESS,
+    query: {
+      enabled: !!address,
+      refetchInterval: 10000,
+    },
+  });
+
+  // Get USDL balance
+  const {
+    data: usdlBalance,
+    isLoading: usdlBalanceLoading,
+    error: usdlBalanceError,
+    refetch: refetchUsdlBalance,
+  } = useBalance({
+    address: address,
+    token: USDL_ADDRESS,
+    query: {
+      enabled: !!address,
+      refetchInterval: 10000,
+    },
+  });
+
   const connect = async () => {
     await open();
   };
+
+  // Helper function to format balance
+  const formatBalance = (balance) => {
+    if (!balance) return "0.0000";
+    try {
+      return (Number(balance.value) / Math.pow(10, balance.decimals)).toFixed(4);
+    } catch (error) {
+      console.error("Error formatting balance:", error);
+      return "0.0000";
+    }
+  };
+
+  const handleUsdcAmountChange = (value) => {
+    setUsdcAmount(value);
+    // For 1:1 swap, USDL amount equals USDC amount
+    setUsdlAmount(value);
+  };
+
+  const handleUsdlAmountChange = (value) => {
+    setUsdlAmount(value);
+    // For 1:1 swap, USDC amount equals USDL amount
+    setUsdcAmount(value);
+  };
+
+  const validateSwapAmount = () => {
+    if (!usdcAmount || parseFloat(usdcAmount) <= 0) {
+      return "Please enter a valid amount";
+    }
+    
+    if (!usdcBalance) {
+      return "Unable to fetch balance";
+    }
+
+    const amountInWei = parseUnits(usdcAmount, usdcBalance.decimals);
+    if (amountInWei > usdcBalance.value) {
+      return "Insufficient USDC balance";
+    }
+
+    return null;
+  };
+
+  const handleSwap = async () => {
+    const validationError = validateSwapAmount();
+    if (validationError) {
+      alert(validationError);
+      return;
+    }
+
+    try {
+      setTransactionStep("approving");
+      setIsApproving(true);
+
+      // Convert amount to wei
+      const amountInWei = parseUnits(usdcAmount, usdcBalance.decimals);
+
+      // Step 1: Approve USDC spending
+      await writeApprove({
+        address: USDC_ADDRESS,
+        abi: ERC20_ABI,
+        functionName: "approve",
+        args: [BOOTSTRAP_ADDRESS, amountInWei],
+      });
+
+      // Wait for approval transaction
+      // Note: You might want to implement a proper waiting mechanism here
+      // For now, we'll rely on the transaction receipt hooks
+      
+    } catch (error) {
+      console.error("Approval failed:", error);
+      setTransactionStep("error");
+      setIsApproving(false);
+    }
+  };
+
+  // Effect to handle approval success and trigger buy
+  React.useEffect(() => {
+    if (isApproveSuccess && transactionStep === "approving") {
+      handleBuy();
+    }
+  }, [isApproveSuccess, transactionStep]);
+
+  const handleBuy = async () => {
+    try {
+      setTransactionStep("buying");
+      setIsApproving(false);
+      setIsBuying(true);
+
+      const amountInWei = parseUnits(usdcAmount, usdcBalance.decimals);
+
+      // Step 2: Call buy function
+      await writeBuy({
+        address: BOOTSTRAP_ADDRESS,
+        abi: BOOTSTRAP_ABI,
+        functionName: "buy",
+        args: [amountInWei],
+      });
+
+    } catch (error) {
+      console.error("Buy failed:", error);
+      setTransactionStep("error");
+      setIsBuying(false);
+    }
+  };
+
+  // Effect to handle buy success
+  React.useEffect(() => {
+    if (isBuySuccess && transactionStep === "buying") {
+      setTransactionStep("success");
+      setIsBuying(false);
+      // Reset form
+      setUsdcAmount("");
+      setUsdlAmount("");
+      // Refetch balances
+      refetchUsdcBalance();
+      refetchUsdlBalance();
+    }
+  }, [isBuySuccess, transactionStep]);
+
+  const getButtonText = () => {
+    if (transactionStep === "approving" || isApproveLoading) {
+      return "Approving...";
+    }
+    if (transactionStep === "buying" || isBuyLoading) {
+      return "Swapping...";
+    }
+    if (transactionStep === "success") {
+      return "Swap Successful!";
+    }
+    if (transactionStep === "error") {
+      return "Try Again";
+    }
+    return "Swap";
+  };
+
+  const isButtonDisabled = () => {
+    return (
+      !usdcAmount || 
+      parseFloat(usdcAmount) <= 0 || 
+      isApproving || 
+      isBuying || 
+      isApproveLoading || 
+      isBuyLoading ||
+      transactionStep === "success"
+    );
+  };
+
+  const resetTransaction = () => {
+    setTransactionStep("");
+    setIsApproving(false);
+    setIsBuying(false);
+  };
+
   return (
     <>
       <div className="box h-full">
@@ -20,8 +230,21 @@ const SwapCard = () => {
                   <input
                     type="text"
                     placeholder="0.000"
+                    value={usdcAmount}
+                    onChange={(e) => handleUsdcAmountChange(e.target.value)}
                     className="border-0 p-0 max-w-[200px] text-2xl bg-transparent p-0 outline-0 text-white placeholder:text-white"
+                    disabled={isApproving || isBuying || isApproveLoading || isBuyLoading}
                   />
+                  {/* USDC Balance Display */}
+                  {address && (
+                    <p className="m-0 text-xs text-gray-400 mt-1">
+                      {usdcBalanceLoading
+                        ? "Loading..."
+                        : usdcBalanceError
+                        ? "Error loading balance"
+                        : `Balance: ${formatBalance(usdcBalance)} USDC`}
+                    </p>
+                  )}
                 </div>
                 <div className="right">
                   <p className="m-0 text-2xl text-white">USDC</p>
@@ -33,8 +256,21 @@ const SwapCard = () => {
                   <input
                     type="text"
                     placeholder="0.000"
+                    value={usdlAmount}
+                    onChange={(e) => handleUsdlAmountChange(e.target.value)}
                     className="border-0 p-0 max-w-[200px] text-2xl bg-transparent p-0 outline-0 text-white placeholder:text-white"
+                    disabled={isApproving || isBuying || isApproveLoading || isBuyLoading}
                   />
+                  {/* USDL Balance Display */}
+                  {address && (
+                    <p className="m-0 text-xs text-gray-400 mt-1">
+                      {usdlBalanceLoading
+                        ? "Loading..."
+                        : usdlBalanceError
+                        ? "Error loading balance"
+                        : `Balance: ${formatBalance(usdlBalance)} USDL`}
+                    </p>
+                  )}
                 </div>
                 <div className="right">
                   <div className="dropdown dropdown-end">
@@ -45,21 +281,25 @@ const SwapCard = () => {
                     >
                       USDL {downIcn}
                     </div>
-                    <ul
-                      tabIndex={0}
-                      className="dropdown-content menu bg-base-100 rounded-box z-1 w-52 p-2 shadow-sm"
-                    >
-                      <li>
-                        <a>Item 1</a>
-                      </li>
-                      <li>
-                        <a>Item 2</a>
-                      </li>
-                    </ul>
                   </div>
                 </div>
               </div>
             </div>
+            
+            {/* Transaction Status */}
+            {transactionStep && (
+              <div className="px-5">
+                <div className="flex items-center justify-center">
+                  <p className="m-0 text-xs text-center">
+                    {transactionStep === "approving" && "Step 1/2: Approving USDC spending..."}
+                    {transactionStep === "buying" && "Step 2/2: Executing swap..."}
+                    {transactionStep === "success" && "✅ Swap completed successfully!"}
+                    {transactionStep === "error" && "❌ Transaction failed. Please try again."}
+                  </p>
+                </div>
+              </div>
+            )}
+
             <div className="px-5">
               <div className="flex items-center justify-between">
                 <p className="m-0 flex items-center gap-2 text-xs">
@@ -68,18 +308,29 @@ const SwapCard = () => {
                 <p className="m-0 flex items-center gap-2 text-xs">0%</p>
               </div>
             </div>
+            
             <div className="btnWrpper">
               {address ? (
                 <>
-                  <button className="flex w-full items-center justify-center gap-3 h-[50px] rounded-[10px] bg-white text-[#000] transition duration-[400ms] font-medium px-4 min-w-[100px] border-[2px] border-white hover:bg-transparent hover:text-white">
-                    Swap
+                  <button 
+                    onClick={transactionStep === "error" ? resetTransaction : handleSwap}
+                    disabled={isButtonDisabled()}
+                    className={`flex w-full items-center justify-center gap-3 h-[50px] rounded-[10px] transition duration-[400ms] font-medium px-4 min-w-[100px] border-[2px] ${
+                      isButtonDisabled() 
+                        ? 'bg-gray-400 text-gray-600 border-gray-400 cursor-not-allowed' 
+                        : transactionStep === "success"
+                        ? 'bg-green-500 text-white border-green-500'
+                        : 'bg-white text-[#000] border-white hover:bg-transparent hover:text-white'
+                    }`}
+                  >
+                    {getButtonText()}
                   </button>
                 </>
               ) : (
                 <>
                   <button
                     onClick={connect}
-                    className="flex w-full items-center justify-center gap-3 h-[50px] rounded-[10px] bg-white text-[#000] transition duration-[400ms] font-medium px-4 min-w-[100px] border-[2px] border-white hover:bg-transparent hover:text-white"
+                    className="flex w-full items-center justify-center gap-3 h-[50px] rounded-[10px] bg-white text-[#000] transition duration-[400ms] font-medium px-4 min-w-[100px] border-[2px] border-[#F3F5F8] hover:bg-transparent hover:text-white"
                   >
                     Connect Wallet
                   </button>
