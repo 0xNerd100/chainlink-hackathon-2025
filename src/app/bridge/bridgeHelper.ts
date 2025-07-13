@@ -34,11 +34,11 @@ const NETWORK_CONFIG = {
 const TOKEN_ADDRESSES = {
   sepolia: {
     USDL: "0xB7217747Ab3592Dd5Ec3C82640b3ec6dF5D93b9D",
-    RAWL: "0x495763E3D020Fb6C2E4c29C12a7d3C5045d99dD5"
+    RWAL: "0x495763E3D020Fb6C2E4c29C12a7d3C5045d99dD5"
   },
   baseSepolia: {
     USDL: "0x5087d7819270DF42c46BE3D8ddc1d1B67E7399B2",
-    RAWL: "0xd3811A60Abe06060C817Db0D82d7330255Af52D7"
+    RWAL: "0xd3811A60Abe06060C817Db0D82d7330255Af52D7"
   }
 };
 
@@ -46,11 +46,11 @@ const TOKEN_ADDRESSES = {
 const TOKEN_MAPPING = {
   sepolia: {
     USDL: { baseSepolia: "USDL" },
-    RAWL: { baseSepolia: "RAWL" }
+    RWAL: { baseSepolia: "RWAL" }
   },
   baseSepolia: {
     USDL: { sepolia: "USDL" },
-    RAWL: { sepolia: "RAWL" }
+    RWAL: { sepolia: "RWAL" }
   }
 };
 
@@ -62,9 +62,9 @@ const TOKEN_METADATA = {
     decimals: 18,
     icon: "💰"
   },
-  RAWL: {
+  RWAL: {
     name: "RAW Lender",
-    symbol: "RAWL",
+    symbol: "RWAL",
     decimals: 18,
     icon: "🔥"
   }
