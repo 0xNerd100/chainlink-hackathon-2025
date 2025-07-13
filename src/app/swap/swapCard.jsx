@@ -1,9 +1,16 @@
 import { useAppKit } from "@reown/appkit/react";
-import React, { useState } from "react";
-import { useAccount, useBalance, useChainId, useWriteContract, useWaitForTransactionReceipt } from "wagmi";
+import React, { useState, useEffect } from "react";
+import {
+  useAccount,
+  useBalance,
+  useChainId,
+  useWriteContract,
+  useWaitForTransactionReceipt,
+} from "wagmi";
 import { getContractAddress } from "../../config/contract";
 import { parseUnits, formatUnits } from "viem";
 import { BOOTSTRAP_ABI, ERC20_ABI } from "@/abi";
+import { toast } from "react-toastify";
 
 const SwapCard = () => {
   const { open } = useAppKit();
@@ -21,15 +28,31 @@ const SwapCard = () => {
   const BOOTSTRAP_ADDRESS = getContractAddress(chainId, "BOOTSTRAP"); // You'll need to add this to your config
 
   // Contract write hooks
-  const { writeContract: writeApprove, data: approveHash } = useWriteContract();
-  const { writeContract: writeBuy, data: buyHash } = useWriteContract();
+  const {
+    writeContract: writeApprove,
+    data: approveHash,
+    error: approveError,
+  } = useWriteContract();
+  const {
+    writeContract: writeBuy,
+    data: buyHash,
+    error: buyError,
+  } = useWriteContract();
 
   // Transaction receipt hooks
-  const { isLoading: isApproveLoading, isSuccess: isApproveSuccess } = useWaitForTransactionReceipt({
+  const {
+    isLoading: isApproveLoading,
+    isSuccess: isApproveSuccess,
+    error: approveReceiptError,
+  } = useWaitForTransactionReceipt({
     hash: approveHash,
   });
 
-  const { isLoading: isBuyLoading, isSuccess: isBuySuccess } = useWaitForTransactionReceipt({
+  const {
+    isLoading: isBuyLoading,
+    isSuccess: isBuySuccess,
+    error: buyReceiptError,
+  } = useWaitForTransactionReceipt({
     hash: buyHash,
   });
 
@@ -71,7 +94,9 @@ const SwapCard = () => {
   const formatBalance = (balance) => {
     if (!balance) return "0.0000";
     try {
-      return (Number(balance.value) / Math.pow(10, balance.decimals)).toFixed(4);
+      return (Number(balance.value) / Math.pow(10, balance.decimals)).toFixed(
+        4
+      );
     } catch (error) {
       console.error("Error formatting balance:", error);
       return "0.0000";
@@ -84,6 +109,7 @@ const SwapCard = () => {
     setUsdlAmount(value);
   };
 
+  console.log("approveError", approveError);
   const handleUsdlAmountChange = (value) => {
     setUsdlAmount(value);
     // For 1:1 swap, USDC amount equals USDL amount
@@ -94,7 +120,7 @@ const SwapCard = () => {
     if (!usdcAmount || parseFloat(usdcAmount) <= 0) {
       return "Please enter a valid amount";
     }
-    
+
     if (!usdcBalance) {
       return "Unable to fetch balance";
     }
@@ -107,10 +133,49 @@ const SwapCard = () => {
     return null;
   };
 
+  // Helper function to parse error messages
+  const parseErrorMessage = (error) => {
+    if (!error) return "Unknown error occurred";
+
+    // Handle different error types
+    if (error.message) {
+      // Check for user rejection
+      if (
+        error.message.includes("User rejected") ||
+        error.message.includes("user rejected")
+      ) {
+        return "Transaction was rejected by user";
+      }
+
+      // Check for insufficient funds
+      if (error.message.includes("insufficient funds")) {
+        return "Insufficient funds for transaction";
+      }
+
+      // Check for gas estimation errors
+      if (error.message.includes("gas")) {
+        return "Gas estimation failed. Please try again";
+      }
+
+      // Check for network errors
+      if (error.message.includes("network")) {
+        return "Network error. Please check your connection";
+      }
+
+      return error.message;
+    }
+
+    if (typeof error === "string") {
+      return error;
+    }
+
+    return "Transaction failed. Please try again";
+  };
+
   const handleSwap = async () => {
     const validationError = validateSwapAmount();
     if (validationError) {
-      alert(validationError);
+      toast.error(validationError);
       return;
     }
 
@@ -128,24 +193,55 @@ const SwapCard = () => {
         functionName: "approve",
         args: [BOOTSTRAP_ADDRESS, amountInWei],
       });
-
-      // Wait for approval transaction
-      // Note: You might want to implement a proper waiting mechanism here
-      // For now, we'll rely on the transaction receipt hooks
-      
     } catch (error) {
       console.error("Approval failed:", error);
-      setTransactionStep("error");
-      setIsApproving(false);
+      const errorMessage = parseErrorMessage(error);
+      handleTransactionError(errorMessage);
+      toast.error(errorMessage);
     }
   };
 
   // Effect to handle approval success and trigger buy
-  React.useEffect(() => {
+  useEffect(() => {
     if (isApproveSuccess && transactionStep === "approving") {
       handleBuy();
     }
   }, [isApproveSuccess, transactionStep]);
+
+  // Effect to handle approval errors
+  useEffect(() => {
+    if (approveError && transactionStep === "approving") {
+      const errorMessage = parseErrorMessage(approveError);
+      handleTransactionError(errorMessage);
+      toast.error(errorMessage);
+    }
+  }, [approveError, transactionStep]);
+
+  // Effect to handle buy errors
+  useEffect(() => {
+    if (buyError && transactionStep === "buying") {
+      const errorMessage = parseErrorMessage(buyError);
+      handleTransactionError(errorMessage);
+      toast.error(errorMessage);
+    }
+  }, [buyError, transactionStep]);
+
+  // Effect to handle receipt errors
+  useEffect(() => {
+    if (approveReceiptError && transactionStep === "approving") {
+      const errorMessage = parseErrorMessage(approveReceiptError);
+      handleTransactionError(errorMessage);
+      toast.error(errorMessage);
+    }
+  }, [approveReceiptError, transactionStep]);
+
+  useEffect(() => {
+    if (buyReceiptError && transactionStep === "buying") {
+      const errorMessage = parseErrorMessage(buyReceiptError);
+      handleTransactionError(errorMessage);
+      toast.error(errorMessage);
+    }
+  }, [buyReceiptError, transactionStep]);
 
   const handleBuy = async () => {
     try {
@@ -162,27 +258,86 @@ const SwapCard = () => {
         functionName: "buy",
         args: [amountInWei],
       });
-
     } catch (error) {
       console.error("Buy failed:", error);
-      setTransactionStep("error");
-      setIsBuying(false);
+      const errorMessage = parseErrorMessage(error);
+      handleTransactionError(errorMessage);
+      toast.error(errorMessage);
     }
   };
 
+  const resetTransaction = () => {
+    setTransactionStep("");
+    setIsApproving(false);
+    setIsBuying(false);
+  };
+
+  const resetAfterSuccess = () => {
+    // Reset all transaction states
+    setTransactionStep("");
+    setIsApproving(false);
+    setIsBuying(false);
+
+    // Reset form inputs
+    setUsdcAmount("");
+    setUsdlAmount("");
+
+    // Refetch balances
+    refetchUsdcBalance();
+    refetchUsdlBalance();
+  };
+
   // Effect to handle buy success
-  React.useEffect(() => {
+  useEffect(() => {
     if (isBuySuccess && transactionStep === "buying") {
       setTransactionStep("success");
       setIsBuying(false);
-      // Reset form
-      setUsdcAmount("");
-      setUsdlAmount("");
-      // Refetch balances
-      refetchUsdcBalance();
-      refetchUsdlBalance();
+      toast.success("Swap completed successfully!");
+
+      // Reset form after a short delay
+      setTimeout(() => {
+        setUsdcAmount("");
+        setUsdlAmount("");
+        // Refetch balances
+        refetchUsdcBalance();
+        refetchUsdlBalance();
+      }, 2000);
     }
   }, [isBuySuccess, transactionStep]);
+  // Effect to handle buy success
+  useEffect(() => {
+    if (isBuySuccess && transactionStep === "buying") {
+      setTransactionStep("success");
+      setIsBuying(false);
+      toast.success("Swap completed successfully!");
+      
+      // Reset form after a short delay
+      setTimeout(() => {
+        setUsdcAmount("");
+        setUsdlAmount("");
+        // Refetch balances
+        refetchUsdcBalance();
+        refetchUsdlBalance();
+      }, 2000);
+
+      // Reset transaction step to empty after 5 seconds
+      setTimeout(() => {
+        setTransactionStep("");
+      }, 5000);
+    }
+  }, [isBuySuccess, transactionStep]);
+
+  const handleTransactionError = (message) => {
+    setTransactionStep("error");
+    setIsApproving(false);
+    setIsBuying(false);
+    console.error("Transaction error:", message);
+    
+    // Reset transaction step to empty after 5 seconds
+    setTimeout(() => {
+      setTransactionStep("");
+    }, 5000);
+  };
 
   const getButtonText = () => {
     if (transactionStep === "approving" || isApproveLoading) {
@@ -202,20 +357,24 @@ const SwapCard = () => {
 
   const isButtonDisabled = () => {
     return (
-      !usdcAmount || 
-      parseFloat(usdcAmount) <= 0 || 
-      isApproving || 
-      isBuying || 
-      isApproveLoading || 
+      !usdcAmount ||
+      parseFloat(usdcAmount) <= 0 ||
+      isApproving ||
+      isBuying ||
+      isApproveLoading ||
       isBuyLoading ||
-      transactionStep === "success"
+      validateSwapAmount() !== null
     );
   };
 
-  const resetTransaction = () => {
-    setTransactionStep("");
-    setIsApproving(false);
-    setIsBuying(false);
+  const getButtonAction = () => {
+    if (transactionStep === "error") {
+      return resetTransaction;
+    }
+    if (transactionStep === "success") {
+      return resetAfterSuccess;
+    }
+    return handleSwap;
   };
 
   return (
@@ -233,7 +392,12 @@ const SwapCard = () => {
                     value={usdcAmount}
                     onChange={(e) => handleUsdcAmountChange(e.target.value)}
                     className="border-0 p-0 max-w-[200px] text-2xl bg-transparent p-0 outline-0 text-white placeholder:text-white"
-                    disabled={isApproving || isBuying || isApproveLoading || isBuyLoading}
+                    disabled={
+                      isApproving ||
+                      isBuying ||
+                      isApproveLoading ||
+                      isBuyLoading
+                    }
                   />
                   {/* USDC Balance Display */}
                   {address && (
@@ -259,7 +423,12 @@ const SwapCard = () => {
                     value={usdlAmount}
                     onChange={(e) => handleUsdlAmountChange(e.target.value)}
                     className="border-0 p-0 max-w-[200px] text-2xl bg-transparent p-0 outline-0 text-white placeholder:text-white"
-                    disabled={isApproving || isBuying || isApproveLoading || isBuyLoading}
+                    disabled={
+                      isApproving ||
+                      isBuying ||
+                      isApproveLoading ||
+                      isBuyLoading
+                    }
                   />
                   {/* USDL Balance Display */}
                   {address && (
@@ -285,16 +454,20 @@ const SwapCard = () => {
                 </div>
               </div>
             </div>
-            
+
             {/* Transaction Status */}
             {transactionStep && (
               <div className="px-5">
                 <div className="flex items-center justify-center">
                   <p className="m-0 text-xs text-center">
-                    {transactionStep === "approving" && "Step 1/2: Approving USDC spending..."}
-                    {transactionStep === "buying" && "Step 2/2: Executing swap..."}
-                    {transactionStep === "success" && "✅ Swap completed successfully!"}
-                    {transactionStep === "error" && "❌ Transaction failed. Please try again."}
+                    {transactionStep === "approving" &&
+                      "Step 1/2: Approving USDC spending..."}
+                    {transactionStep === "buying" &&
+                      "Step 2/2: Executing swap..."}
+                    {transactionStep === "success" &&
+                      "✅ Swap completed successfully!"}
+                    {transactionStep === "error" &&
+                      "❌ Transaction failed. Click 'Try Again' to retry."}
                   </p>
                 </div>
               </div>
@@ -308,19 +481,19 @@ const SwapCard = () => {
                 <p className="m-0 flex items-center gap-2 text-xs">0%</p>
               </div>
             </div>
-            
+
             <div className="btnWrpper">
               {address ? (
                 <>
-                  <button 
-                    onClick={transactionStep === "error" ? resetTransaction : handleSwap}
+                  <button
+                    onClick={getButtonAction()}
                     disabled={isButtonDisabled()}
                     className={`flex w-full items-center justify-center gap-3 h-[50px] rounded-[10px] transition duration-[400ms] font-medium px-4 min-w-[100px] border-[2px] ${
-                      isButtonDisabled() 
-                        ? 'bg-gray-400 text-gray-600 border-gray-400 cursor-not-allowed' 
+                      isButtonDisabled()
+                        ? "bg-gray-400 text-gray-600 border-gray-400 cursor-not-allowed"
                         : transactionStep === "success"
-                        ? 'bg-green-500 text-white border-green-500'
-                        : 'bg-white text-[#000] border-white hover:bg-transparent hover:text-white'
+                        ? "bg-green-500 text-white border-green-500"
+                        : "bg-white text-[#000] border-white hover:bg-transparent hover:text-white"
                     }`}
                   >
                     {getButtonText()}
