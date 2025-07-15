@@ -31,8 +31,8 @@ const SwapCard = () => {
   const SWAP_ROUTER = "0x3A9D48AB9751398BbFa63ad67599Bb04e4BdF98b"; // Universal Router
   const poolFee = 500; // 0.05%
 
-  // Universal Router command constants
-  const V3_SWAP_EXACT_IN = 0x00;
+  // Universal Router command constants for V4
+  const V4_SWAP = 0x604; // Command for V4 swaps
 
   // Get token addresses based on selection
   const getTokenAddress = (token) => {
@@ -182,12 +182,22 @@ const SwapCard = () => {
     return null;
   };
 
-  // Helper function to encode V3 swap path
-  const encodePath = (tokenA, tokenB, fee) => {
-    return encodePacked(
-      ["address", "uint24", "address"],
-      [tokenA, fee, tokenB]
+  // Helper function to encode V4 swap parameters
+  const encodeV4SwapParams = (
+    recipient,
+    amountIn,
+    amountOutMinimum,
+    tokenIn,
+    tokenOut,
+    fee
+  ) => {
+    // For V4_SWAP, we need to encode the swap parameters according to V4 specification
+    // This typically includes: recipient, amountIn, amountOutMinimum, tokenIn, tokenOut, fee, and other V4-specific params
+    const params = encodePacked(
+      ["address", "uint256", "uint256", "address", "address", "uint24"],
+      [recipient, amountIn, amountOutMinimum, tokenIn, tokenOut, fee]
     );
+    return params;
   };
 
   // Helper function to parse error messages
@@ -307,38 +317,26 @@ const SwapCard = () => {
         toTokenBalance?.decimals || 18
       );
 
-      // Create the path for V3 swap
-      const path = encodePath(
-        getTokenAddress(fromToken),
-        getTokenAddress(toToken),
-        poolFee
-      );
-
-      // Encode the V3_SWAP_EXACT_IN command parameters
-      const swapParams = [
+      // Encode V4 swap parameters
+      const v4SwapParams = encodeV4SwapParams(
         address, // recipient
         amountInWei, // amountIn
-        amountOutMinimum, // amountOutMin
-        path, // path
-        false, // payerIsUser (false since we're using ERC20 tokens)
-      ];
-
-      // Encode the parameters for the V3 swap
-      const encodedSwapParams = encodePacked(
-        ["address", "uint256", "uint256", "bytes", "bool"],
-        swapParams
+        amountOutMinimum, // amountOutMinimum
+        getTokenAddress(fromToken), // tokenIn
+        getTokenAddress(toToken), // tokenOut
+        poolFee // fee
       );
 
-      // Create commands array (single command)
-      const commands = `0x${V3_SWAP_EXACT_IN.toString(16).padStart(2, "0")}`;
+      // Create commands array with V4_SWAP command (0x604)
+      const commands = `0x${V4_SWAP.toString(16).padStart(4, "0").slice(-2)}`;
 
-      // Create inputs array
-      const inputs = [encodedSwapParams];
+      // Create inputs array with encoded V4 swap parameters
+      const inputs = [v4SwapParams];
 
       // Calculate deadline (10 minutes from now)
       const deadline = Math.floor(Date.now() / 1000) + 60 * 10;
 
-      // Step 2: Execute swap using Universal Router
+      // Execute swap using Universal Router with V4_SWAP command
       writeSwap({
         address: SWAP_ROUTER,
         abi: ROUTER_ABI,
@@ -594,7 +592,7 @@ const SwapCard = () => {
                     {transactionStep === "approving" &&
                       `Step 1/2: Approving ${fromToken} spending...`}
                     {transactionStep === "swapping" &&
-                      `Step 2/2: Executing ${fromToken} to ${toToken} swap...`}
+                      `Step 2/2: Executing V4 ${fromToken} to ${toToken} swap...`}
                     {transactionStep === "success" &&
                       `✅ ${fromToken} to ${toToken} swap completed successfully!`}
                     {transactionStep === "error" &&
@@ -608,7 +606,7 @@ const SwapCard = () => {
             <div className="px-5">
               <div className="flex items-center justify-between mb-2">
                 <p className="m-0 flex items-center gap-2 text-xs">
-                  Pool Fee <span className="icn">{infoIcn}</span>
+                  Pool Fee (V4) <span className="icn">{infoIcn}</span>
                 </p>
                 <p className="m-0 flex items-center gap-2 text-xs">0.05%</p>
               </div>
