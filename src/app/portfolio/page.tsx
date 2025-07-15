@@ -1,8 +1,27 @@
 "use client";
 import Image from "next/image";
-import React from "react";
+import React, { use } from "react";
 import BarChart from "@/components/Charts/BarChart";
+import { useBalance, useReadContract, useAccount } from 'wagmi';
+
+
+
 const Portfolio = () => {
+  const tokenAddress = "0xB7217747Ab3592Dd5Ec3C82640b3ec6dF5D93b9D";
+  const targetAddress = useAccount().address;
+  console.log("Target Address", targetAddress);
+
+    // Fetch token balance
+  const { data: balance, isLoading: balanceLoading, refetch: refetchBalance } = useBalance({
+    address:targetAddress,
+    token: "0xB7217747Ab3592Dd5Ec3C82640b3ec6dF5D93b9D" as `0x${string}`,
+    chainId:11155111,
+    query: {
+      enabled: !!tokenAddress && !!targetAddress,
+    },
+  });
+  console.log("USDL Balance", balance?.value);
+
   return (
     <>
       <section className="relative py-10">
@@ -12,6 +31,7 @@ const Portfolio = () => {
               <div className="head border-b border-white pb-2 mb-4">
                 <h4 className="m-0 2xl:text-[22px] text-[18px]">
                   Lendr Token Balances
+
                 </h4>
               </div>
               <div className="grid gap-4 grid-cols-12">
@@ -55,7 +75,7 @@ const Portfolio = () => {
                               Balance
                             </p>
                             <h4 className="m-0 text-white leading-tight text-[24px] font-medium">
-                              0.00 USDL
+                                {balance && balance?.value /BigInt(1e18)}
                             </h4>
                             <span className="text-[10px] leading-tight block font-medium">
                               $0.00

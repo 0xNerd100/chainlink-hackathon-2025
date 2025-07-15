@@ -43,22 +43,28 @@ export const config: Configs = {
     ethDecimal: 18,
     greenDecimal: 18,
   },
+
+
 };
 
 export const supportedChains = [
-  1, //etherum
+  1, //ethereum mainnet
   56, // bsc
   97, //bsc testnet
+  11155111, // ethereum sepolia testnet
+  18432, // base testnet
 ];
 
 export const chainSwap: Record<number, number> = {
   1: 56,
   56: 1,
+  11155111: 97, // sepolia to bsc testnet
+  97: 11155111, // bsc testnet to sepolia
 };
 
-export const defaultChain = 97; //1;
+export const defaultChain = 11155111; // sepolia testnet
 
-export const pepeToken = "0x2F938Da4C59Ec4B5289CB93Dea634247AaCcBa20"; //"0x55Fa55139FA17a04e632F85BFb38568f4193aE4C"
+export const pepeToken = "0x2F938Da4C59Ec4B5289CB93Dea634247AaCcBa20";
 export const pepeTokenDecimal = 18;
 
 export const referals = {

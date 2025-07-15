@@ -34,11 +34,11 @@ const NETWORK_CONFIG = {
 const TOKEN_ADDRESSES = {
   sepolia: {
     USDL: "0xB7217747Ab3592Dd5Ec3C82640b3ec6dF5D93b9D",
-    RWAL: "0x495763E3D020Fb6C2E4c29C12a7d3C5045d99dD5"
+    RAWL: "0x495763E3D020Fb6C2E4c29C12a7d3C5045d99dD5"
   },
   baseSepolia: {
     USDL: "0x5087d7819270DF42c46BE3D8ddc1d1B67E7399B2",
-    RWAL: "0xd3811A60Abe06060C817Db0D82d7330255Af52D7"
+    RAWL: "0xd3811A60Abe06060C817Db0D82d7330255Af52D7"
   }
 };
 
@@ -46,11 +46,11 @@ const TOKEN_ADDRESSES = {
 const TOKEN_MAPPING = {
   sepolia: {
     USDL: { baseSepolia: "USDL" },
-    RWAL: { baseSepolia: "RWAL" }
+    RAWL: { baseSepolia: "RAWL" }
   },
   baseSepolia: {
     USDL: { sepolia: "USDL" },
-    RWAL: { sepolia: "RWAL" }
+    RAWL: { sepolia: "RAWL" }
   }
 };
 
@@ -62,13 +62,13 @@ const TOKEN_METADATA = {
     decimals: 18,
     icon: "💰"
   },
-  RWAL: {
+  RAWL: {
     name: "RAW Lender",
-    symbol: "RWAL",
+    symbol: "RAWL",
     decimals: 18,
     icon: "🔥"
   }
-  
+
 };
 
 // Enhanced ABI definitions
@@ -185,19 +185,19 @@ export const useBridgeHelper = () => {
 
   // Get destination token for a given source token
   const getDestinationToken = useCallback((
-    sourceTokenSymbol: string, 
-    sourceChain: keyof typeof NETWORK_CONFIG, 
+    sourceTokenSymbol: string,
+    sourceChain: keyof typeof NETWORK_CONFIG,
     destinationChain: keyof typeof NETWORK_CONFIG
   ): TokenInfo | null => {
     const mapping = TOKEN_MAPPING[sourceChain]?.[sourceTokenSymbol as keyof (typeof TOKEN_MAPPING)[typeof sourceChain]];
     const destinationSymbol = mapping?.[destinationChain as keyof typeof mapping];
-    
+
     if (!destinationSymbol) return null;
-    
+
     const destinationAddress = TOKEN_ADDRESSES[destinationChain][destinationSymbol as keyof (typeof TOKEN_ADDRESSES)[typeof destinationChain]];
-    
+
     if (!destinationAddress) return null;
-    
+
     return {
       address: destinationAddress,
       symbol: destinationSymbol,
@@ -209,8 +209,8 @@ export const useBridgeHelper = () => {
 
   // Check if a token can be bridged to a destination chain
   const canBridgeToken = useCallback((
-    sourceTokenSymbol: string, 
-    sourceChain: keyof typeof NETWORK_CONFIG, 
+    sourceTokenSymbol: string,
+    sourceChain: keyof typeof NETWORK_CONFIG,
     destinationChain: keyof typeof NETWORK_CONFIG
   ): boolean => {
     return !!getDestinationToken(sourceTokenSymbol, sourceChain, destinationChain);
@@ -222,13 +222,13 @@ export const useBridgeHelper = () => {
       const functionSelector = keccak256(toHex("CCIP EVMExtraArgsV2")).slice(0, 10);
       const gasLimit = 0n;
       const allowOutOfOrderExecution = true;
-      
+
       const encodedArgs = encodeFunctionData({
         abi: parseAbi(['function encode(uint256 gasLimit, bool allowOutOfOrderExecution) returns (bytes)']),
         functionName: 'encode',
         args: [gasLimit, allowOutOfOrderExecution]
       });
-      
+
       const result = functionSelector + encodedArgs.slice(10);
       log('Encoded extra args:', result);
       return result;
@@ -293,6 +293,7 @@ export const useBridgeHelper = () => {
     if (!publicClient || !address) {
       throw new Error('Public client or address not available');
     }
+    console.log("Estimating fee for bridge:", estimateFee);
 
     try {
       const sourceConfig = NETWORK_CONFIG[params.sourceChain];
@@ -307,8 +308,8 @@ export const useBridgeHelper = () => {
         feeType: params.feeType
       });
 
-      const feeTokenAddress = params.feeType === FeeType.NATIVE 
-        ? '0x0000000000000000000000000000000000000000' 
+      const feeTokenAddress = params.feeType === FeeType.NATIVE
+        ? '0x0000000000000000000000000000000000000000'
         : sourceConfig.link;
 
       // Get token decimals for proper amount parsing
@@ -349,6 +350,7 @@ export const useBridgeHelper = () => {
         feeFormatted: formatUnits(fee, 18),
         feeType: params.feeType
       });
+      console.log("Fee:", fee);
 
       return fee;
     } catch (error) {
@@ -439,18 +441,25 @@ export const useBridgeHelper = () => {
       log('Source token balance:', sourceTokenBalance);
 
       // Check destination token balance
+      // Update the bridgeTokens function - replace the destination balance check section
+      // Check destination token balance
+      const recipientForBalance = params.receiverAddress;
       if (params.destinationChain === 'baseSepolia') {
         try {
           const destinationBalance = await getTokenBalance(
             TOKEN_ADDRESSES.baseSepolia.USDL,
-            params.receiverAddress,
+            recipientForBalance,
             destinationConfig
           );
-          log('Destination USDL balance on Base Sepolia:', destinationBalance);
+          log('Destination USDL balance on Base Sepolia for recipient:', {
+            recipient: recipientForBalance,
+            balance: destinationBalance
+          });
         } catch (error) {
           logError('Could not fetch destination balance:', error);
         }
       }
+
 
       // Check if destination chain is supported
       const isSupported = await publicClient.readContract({
@@ -468,9 +477,9 @@ export const useBridgeHelper = () => {
       const sourceTokenDecimals = TOKEN_METADATA[params.sourceTokenSymbol as keyof typeof TOKEN_METADATA]?.decimals || 18;
       const amount = parseUnits(params.amount, sourceTokenDecimals);
 
-      
+
       const balanceInWei = parseUnits(sourceTokenBalance.balance, sourceTokenBalance.decimals);
-      
+
       if (balanceInWei < amount) {
         throw new Error(`Insufficient ${params.sourceTokenSymbol} balance. Required: ${formatUnits(amount, sourceTokenDecimals)}, Available: ${sourceTokenBalance.balance}`);
       }
@@ -480,8 +489,8 @@ export const useBridgeHelper = () => {
       if (currentAllowance < amount) {
         log('Approving token allowance...');
         const approveHash = await approveToken(params.sourceTokenAddress, sourceConfig.router, amount);
-        
-        const approvalReceipt = await publicClient.waitForTransactionReceipt({ 
+
+        const approvalReceipt = await publicClient.waitForTransactionReceipt({
           hash: approveHash,
           confirmations: sourceConfig.confirmations
         });
@@ -492,14 +501,14 @@ export const useBridgeHelper = () => {
       let estimatedFee: bigint;
       if (params.feeType === FeeType.LINK) {
         estimatedFee = await estimateFee(params);
-        
+
         const linkBalance = await getTokenBalance(sourceConfig.link, address, sourceConfig);
         const linkBalanceInWei = parseUnits(linkBalance.balance, linkBalance.decimals);
-        
+
         if (linkBalanceInWei < estimatedFee) {
           throw new Error(`Insufficient LINK balance. Required: ${formatUnits(estimatedFee, 18)}, Available: ${linkBalance.balance}`);
         }
-        
+
         log('LINK balance check passed:', {
           required: formatUnits(estimatedFee, 18),
           available: linkBalance.balance,
@@ -511,8 +520,8 @@ export const useBridgeHelper = () => {
         if (linkAllowance < estimatedFee) {
           log('Approving LINK token allowance...');
           const approveLinkHash = await approveToken(sourceConfig.link, sourceConfig.router, estimatedFee);
-          
-          const linkApprovalReceipt = await publicClient.waitForTransactionReceipt({ 
+
+          const linkApprovalReceipt = await publicClient.waitForTransactionReceipt({
             hash: approveLinkHash,
             confirmations: sourceConfig.confirmations
           });
@@ -523,8 +532,8 @@ export const useBridgeHelper = () => {
       }
 
       // Prepare the message
-      const feeTokenAddress = params.feeType === FeeType.NATIVE 
-        ? '0x0000000000000000000000000000000000000000' 
+      const feeTokenAddress = params.feeType === FeeType.NATIVE
+        ? '0x0000000000000000000000000000000000000000'
         : sourceConfig.link;
 
       const tokenAmounts = [
@@ -552,7 +561,7 @@ export const useBridgeHelper = () => {
 
       // Simulate the transaction
       const value = params.feeType === FeeType.NATIVE ? estimatedFee : 0n;
-      
+
       await publicClient.simulateContract({
         address: sourceConfig.router as `0x${string}`,
         abi: ROUTER_ABI,
@@ -576,7 +585,7 @@ export const useBridgeHelper = () => {
       log('CCIP transaction sent:', hash);
 
       // Wait for transaction confirmation
-      const receipt = await publicClient.waitForTransactionReceipt({ 
+      const receipt = await publicClient.waitForTransactionReceipt({
         hash,
         confirmations: sourceConfig.confirmations
       });
@@ -591,7 +600,7 @@ export const useBridgeHelper = () => {
       // Parse logs to get message ID
       let messageId = '';
       const ccipMessageSentSignature = keccak256(toHex('CCIPMessageSent(uint64,bytes32,(bytes,bytes,(address,uint256)[],address,bytes),uint256,address)'));
-      
+
       for (const log of receipt.logs) {
         try {
           if (log.topics[0] === ccipMessageSentSignature) {
@@ -601,7 +610,7 @@ export const useBridgeHelper = () => {
               topics: log.topics,
               eventName: 'CCIPMessageSent'
             });
-            
+
             messageId = decodedLog.args.messageId;
             break;
           }
@@ -642,48 +651,7 @@ export const useBridgeHelper = () => {
     }
   }, [walletClient, publicClient, address, checkAllowance, approveToken, estimateFee, encodeExtraArgs, getTokenBalance, log, logError]);
 
-  // const getTokenBalance = useCallback(async (tokenAddress: string, userAddress: string, networkConfig: any) => {
-  //   if (!publicClient) {
-  //     throw new Error('Public client not available');
-  //   }
 
-  //   try {
-  //     const [balance, decimals, symbol, name] = await Promise.all([
-  //       publicClient.readContract({
-  //         address: tokenAddress as `0x${string}`,
-  //         abi: ERC20_ABI,
-  //         functionName: 'balanceOf',
-  //         args: [userAddress as `0x${string}`]
-  //       }),
-  //       publicClient.readContract({
-  //         address: tokenAddress as `0x${string}`,
-  //         abi: ERC20_ABI,
-  //         functionName: 'decimals'
-  //       }),
-  //       publicClient.readContract({
-  //         address: tokenAddress as `0x${string}`,
-  //         abi: ERC20_ABI,
-  //         functionName: 'symbol'
-  //       }),
-  //       publicClient.readContract({
-  //         address: tokenAddress as `0x${string}`,
-  //         abi: ERC20_ABI,
-  //         functionName: 'name'
-  //       })
-  //     ]);
-
-  //     const formattedBalance = formatUnits(balance, decimals);
-  //     return {
-  //       balance: formattedBalance,
-  //       decimals,
-  //       symbol,
-  //       name
-  //     };
-  //   } catch (error) {
-  //     logError('Error getting token balance:', error);
-  //     throw error;
-  //   }
-  // }, [publicClient, logError]);
 
   return {
     bridgeTokens,

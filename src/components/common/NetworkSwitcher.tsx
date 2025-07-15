@@ -7,16 +7,33 @@ import styled from "styled-components";
 const logo = {
   ETH: "/assets/media/eth.svg",
   BNB: "/assets/media/bnb.svg",
+  SepoliaETH: "/assets/media/eth.svg", // Using same ETH logo for Sepolia
+};
+
+const networkNames = {
+  1: "ETH", // Ethereum Mainnet
+  56: "BNB", // BSC Mainnet
+  11155111: "SepoliaETH", // Ethereum Sepolia Testnet
+  84532: "BaseSepoliaETH", // Base Sepolia Testnet
 };
 
 function NetworkSwitcher() {
   const { chains, switchChain } = useSwitchChain();
   const chainId = useChainId();
-  const [selected, setSelected] = useState(chainId == 1 ? "ETH" : "BNB");
+
+  // Function to get network symbol based on chain ID
+  const getNetworkSymbol = (chainId: number) => {
+    return networkNames[chainId as keyof typeof networkNames] || "ETH";
+  };
+
+  const [selected, setSelected] = useState(getNetworkSymbol(chainId));
+
   const handleNetwork = (chain: any) => {
     switchChain({ chainId: chain?.id });
-    setSelected(chain?.nativeCurrency?.symbol);
+    const networkSymbol = getNetworkSymbol(chain?.id);
+    setSelected(networkSymbol);
   };
+
   return (
     <>
       <NetworkButton className="dropdown dropdown-bottom dropdown-end  ">
@@ -32,7 +49,9 @@ function NetworkSwitcher() {
             alt=""
             className="max-w-full h-[20px] w-[20px] object-contain rounded-full"
           />
-          <span className="lg:block hidden">{selected}</span>
+          <span className="lg:block hidden">
+            {selected === "SepoliaETH" ? "Sepolia" : selected}
+          </span>
         </div>
         <ul
           tabIndex={0}
@@ -40,7 +59,10 @@ function NetworkSwitcher() {
         >
           {chains.map((chain) => (
             <li key={chain.id} className="">
-              <button onClick={() => handleNetwork(chain)}>{chain.name}</button>
+              <button onClick={() => handleNetwork(chain)}>
+                {chain.name}
+                {chain.id === 11155111 && " (Testnet)"}
+              </button>
             </li>
           ))}
         </ul>

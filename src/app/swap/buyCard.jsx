@@ -9,33 +9,23 @@ import {
 } from "wagmi";
 import { getContractAddress } from "../../config/contract";
 import { parseUnits, formatUnits } from "viem";
-import { ERC20_ABI , ROUTER_ABI } from "@/abi";
+import { BOOTSTRAP_ABI, ERC20_ABI } from "@/abi";
 import { toast } from "react-toastify";
 
-
-const SwapCard = () => {
+const BuyCard = () => {
   const { open } = useAppKit();
   const { address, isConnected } = useAccount();
   const chainId = useChainId();
-  const [fromAmount, setFromAmount] = useState("");
-  const [toAmount, setToAmount] = useState("");
-  const [fromToken, setFromToken] = useState("USDL");
-  const [toToken, setToToken] = useState("RWAL");
+  const [usdcAmount, setUsdcAmount] = useState("");
+  const [usdlAmount, setUsdlAmount] = useState("");
   const [isApproving, setIsApproving] = useState(false);
-  const [isSwapping, setIsSwapping] = useState(false);
-  const [transactionStep, setTransactionStep] = useState(""); // "approving", "swapping", "success", "error"
-  const [slippage, setSlippage] = useState(5); // 5% slippage tolerance
+  const [isBuying, setIsBuying] = useState(false);
+  const [transactionStep, setTransactionStep] = useState(""); // "approving", "buying", "success", "error"
 
   // Get contract addresses for current network
+  const USDC_ADDRESS = getContractAddress(chainId, "USDC");
   const USDL_ADDRESS = getContractAddress(chainId, "USDL");
-  const RWAL_ADDRESS = getContractAddress(chainId, "RWAL");
-  const SWAP_ROUTER = "0xE592427A0AEce92De3Edee1F18E0157C05861564"; // Uniswap V3 SwapRouter
-  const poolFee = 500; // 0.05%
-
-  // Get token addresses based on selection
-  const getTokenAddress = (token) => {
-    return token === "USDL" ? USDL_ADDRESS : RWAL_ADDRESS;
-  };
+  const BOOTSTRAP_ADDRESS = getContractAddress(chainId, "BOOTSTRAP"); // You'll need to add this to your config
 
   // Contract write hooks
   const {
@@ -44,9 +34,9 @@ const SwapCard = () => {
     error: approveError,
   } = useWriteContract();
   const {
-    writeContract: writeSwap,
-    data: swapHash,
-    error: swapError,
+    writeContract: writeBuy,
+    data: buyHash,
+    error: buyError,
   } = useWriteContract();
 
   // Transaction receipt hooks
@@ -59,37 +49,37 @@ const SwapCard = () => {
   });
 
   const {
-    isLoading: isSwapLoading,
-    isSuccess: isSwapSuccess,
-    error: swapReceiptError,
+    isLoading: isBuyLoading,
+    isSuccess: isBuySuccess,
+    error: buyReceiptError,
   } = useWaitForTransactionReceipt({
-    hash: swapHash,
+    hash: buyHash,
   });
 
-  // Get FROM token balance
+  // Get USDC balance
   const {
-    data: fromTokenBalance,
-    isLoading: fromTokenBalanceLoading,
-    error: fromTokenBalanceError,
-    refetch: refetchFromTokenBalance,
+    data: usdcBalance,
+    isLoading: usdcBalanceLoading,
+    error: usdcBalanceError,
+    refetch: refetchUsdcBalance,
   } = useBalance({
     address: address,
-    token: getTokenAddress(fromToken),
+    token: USDC_ADDRESS,
     query: {
       enabled: !!address,
       refetchInterval: 10000,
     },
   });
 
-  // Get TO token balance
+  // Get USDL balance
   const {
-    data: toTokenBalance,
-    isLoading: toTokenBalanceLoading,
-    error: toTokenBalanceError,
-    refetch: refetchToTokenBalance,
+    data: usdlBalance,
+    isLoading: usdlBalanceLoading,
+    error: usdlBalanceError,
+    refetch: refetchUsdlBalance,
   } = useBalance({
     address: address,
-    token: getTokenAddress(toToken),
+    token: USDL_ADDRESS,
     query: {
       enabled: !!address,
       refetchInterval: 10000,
@@ -104,7 +94,9 @@ const SwapCard = () => {
   const formatBalance = (balance) => {
     if (!balance) return "0.0000";
     try {
-      return (Number(balance.value) / Math.pow(10, balance.decimals)).toFixed(4);
+      return (Number(balance.value) / Math.pow(10, balance.decimals)).toFixed(
+        4
+      );
     } catch (error) {
       console.error("Error formatting balance:", error);
       return "0.0000";
@@ -113,63 +105,47 @@ const SwapCard = () => {
 
   // Handle Max button click
   const handleInputMaxBalance = () => {
-    if (!fromTokenBalance) {
+    if (!usdcBalance) {
       toast.error("Unable to fetch balance");
       return;
     }
 
     try {
-      const maxBalance = formatUnits(fromTokenBalance.value, fromTokenBalance.decimals);
-      setFromAmount(parseFloat(maxBalance).toFixed(6));
-      // For simplicity, assuming 1:1 ratio. You can implement price fetching here
-      // In real implementation, you'd fetch the current price from the pool
-      setToAmount(parseFloat(maxBalance).toFixed(6));
+      const maxBalance = formatUnits(usdcBalance.value, usdcBalance.decimals);
+      setUsdcAmount(parseFloat(maxBalance).toFixed(6));
+      // For 1:1 swap, USDL amount equals USDC amount
+      setUsdlAmount(parseFloat(maxBalance).toFixed(6));
     } catch (error) {
       console.error("Error setting max balance:", error);
       toast.error("Error setting max balance");
     }
   };
 
-  // Handle switching tokens
-  const switchTokens = () => {
-    setFromToken(toToken);
-    setToToken(fromToken);
-    setFromAmount(toAmount);
-    setToAmount(fromAmount);
+  const handleUsdcAmountChange = (value) => {
+    setUsdcAmount(value);
+    // For 1:1 swap, USDL amount equals USDC amount
+    setUsdlAmount(value);
   };
 
-  const handleFromAmountChange = (value) => {
-    setFromAmount(value);
-    // For simplicity, assuming 1:1 ratio. You can implement price fetching here
-    // In real implementation, you'd fetch the current price from the pool
-    setToAmount(value);
-  };
-
-  // Calculate amountOutMinimum based on toAmount and slippage
-  const getAmountOutMinimum = () => {
-    if (!toAmount || parseFloat(toAmount) <= 0) return "";
-    const amountOut = parseFloat(toAmount) * (1 - slippage / 100);
-    return amountOut.toFixed(6);
-  };
-
-  const handleToAmountChange = (value) => {
-    setToAmount(value);
-    // For simplicity, assuming 1:1 ratio
-    setFromAmount(value);
+  console.log("approveError", approveError);
+  const handleUsdlAmountChange = (value) => {
+    setUsdlAmount(value);
+    // For 1:1 swap, USDC amount equals USDL amount
+    setUsdcAmount(value);
   };
 
   const validateSwapAmount = () => {
-    if (!fromAmount || parseFloat(fromAmount) <= 0) {
+    if (!usdcAmount || parseFloat(usdcAmount) <= 0) {
       return "Please enter a valid amount";
     }
 
-    if (!fromTokenBalance) {
+    if (!usdcBalance) {
       return "Unable to fetch balance";
     }
 
-    const amountInWei = parseUnits(fromAmount, fromTokenBalance.decimals);
-    if (amountInWei > fromTokenBalance.value) {
-      return `Insufficient ${fromToken} balance`;
+    const amountInWei = parseUnits(usdcAmount, usdcBalance.decimals);
+    if (amountInWei > usdcBalance.value) {
+      return "Insufficient USDC balance";
     }
 
     return null;
@@ -179,7 +155,9 @@ const SwapCard = () => {
   const parseErrorMessage = (error) => {
     if (!error) return "Unknown error occurred";
 
+    // Handle different error types
     if (error.message) {
+      // Check for user rejection
       if (
         error.message.includes("User rejected") ||
         error.message.includes("user rejected")
@@ -187,14 +165,17 @@ const SwapCard = () => {
         return "Transaction was rejected by user";
       }
 
+      // Check for insufficient funds
       if (error.message.includes("insufficient funds")) {
         return "Insufficient funds for transaction";
       }
 
+      // Check for gas estimation errors
       if (error.message.includes("gas")) {
         return "Gas estimation failed. Please try again";
       }
 
+      // Check for network errors
       if (error.message.includes("network")) {
         return "Network error. Please check your connection";
       }
@@ -221,14 +202,14 @@ const SwapCard = () => {
       setIsApproving(true);
 
       // Convert amount to wei
-      const amountInWei = parseUnits(fromAmount, fromTokenBalance.decimals);
+      const amountInWei = parseUnits(usdcAmount, usdcBalance.decimals);
 
-      // Step 1: Approve token spending
+      // Step 1: Approve USDC spending
       writeApprove({
-        address: getTokenAddress(fromToken),
+        address: USDC_ADDRESS,
         abi: ERC20_ABI,
         functionName: "approve",
-        args: [SWAP_ROUTER, amountInWei],
+        args: [BOOTSTRAP_ADDRESS, amountInWei],
       });
     } catch (error) {
       console.error("Approval failed:", error);
@@ -238,10 +219,10 @@ const SwapCard = () => {
     }
   };
 
-  // Effect to handle approval success and trigger swap
+  // Effect to handle approval success and trigger buy
   useEffect(() => {
     if (isApproveSuccess && transactionStep === "approving") {
-      handleSwapExecution();
+      handleBuy();
     }
   }, [isApproveSuccess, transactionStep]);
 
@@ -254,14 +235,14 @@ const SwapCard = () => {
     }
   }, [approveError, transactionStep]);
 
-  // Effect to handle swap errors
+  // Effect to handle buy errors
   useEffect(() => {
-    if (swapError && transactionStep === "swapping") {
-      const errorMessage = parseErrorMessage(swapError);
+    if (buyError && transactionStep === "buying") {
+      const errorMessage = parseErrorMessage(buyError);
       handleTransactionError(errorMessage);
       toast.error(errorMessage);
     }
-  }, [swapError, transactionStep]);
+  }, [buyError, transactionStep]);
 
   // Effect to handle receipt errors
   useEffect(() => {
@@ -273,45 +254,30 @@ const SwapCard = () => {
   }, [approveReceiptError, transactionStep]);
 
   useEffect(() => {
-    if (swapReceiptError && transactionStep === "swapping") {
-      const errorMessage = parseErrorMessage(swapReceiptError);
+    if (buyReceiptError && transactionStep === "buying") {
+      const errorMessage = parseErrorMessage(buyReceiptError);
       handleTransactionError(errorMessage);
       toast.error(errorMessage);
     }
-  }, [swapReceiptError, transactionStep]);
+  }, [buyReceiptError, transactionStep]);
 
-  const handleSwapExecution = async () => {
+  const handleBuy = async () => {
     try {
-      setTransactionStep("swapping");
+      setTransactionStep("buying");
       setIsApproving(false);
-      setIsSwapping(true);
+      setIsBuying(true);
 
-      const amountInWei = parseUnits(fromAmount, fromTokenBalance.decimals);
-      const amountOutMinimum = parseUnits(
-        (parseFloat(toAmount) * (1 - slippage / 100)).toString(),
-        toTokenBalance?.decimals || 18
-      );
+      const amountInWei = parseUnits(usdcAmount, usdcBalance.decimals);
 
-      // Step 2: Execute swap using exactInputSingle
-       writeSwap({
-        address: SWAP_ROUTER,
-        abi: ROUTER_ABI,
-        functionName: "exactInputSingle",
-        args: [
-          {
-            tokenIn: getTokenAddress(fromToken),
-            tokenOut: getTokenAddress(toToken),
-            fee: poolFee,
-            recipient: address,
-            deadline: Math.floor(Date.now() / 1000) + 60 * 10, // 10 minutes
-            amountIn: amountInWei,
-            amountOutMinimum: amountOutMinimum,
-            sqrtPriceLimitX96: 0,
-          },
-        ],
+      // Step 2: Call buy function
+      await writeBuy({
+        address: BOOTSTRAP_ADDRESS,
+        abi: BOOTSTRAP_ABI,
+        functionName: "buy",
+        args: [amountInWei],
       });
     } catch (error) {
-      console.error("Swap failed:", error);
+      console.error("Buy failed:", error);
       const errorMessage = parseErrorMessage(error);
       handleTransactionError(errorMessage);
       toast.error(errorMessage);
@@ -321,45 +287,71 @@ const SwapCard = () => {
   const resetTransaction = () => {
     setTransactionStep("");
     setIsApproving(false);
-    setIsSwapping(false);
+    setIsBuying(false);
   };
 
   const resetAfterSuccess = () => {
+    // Reset all transaction states
     setTransactionStep("");
     setIsApproving(false);
-    setIsSwapping(false);
-    setFromAmount("");
-    setToAmount("");
-    refetchFromTokenBalance();
-    refetchToTokenBalance();
+    setIsBuying(false);
+
+    // Reset form inputs
+    setUsdcAmount("");
+    setUsdlAmount("");
+
+    // Refetch balances
+    refetchUsdcBalance();
+    refetchUsdlBalance();
   };
 
-  // Effect to handle swap success
+  // Effect to handle buy success
   useEffect(() => {
-    if (isSwapSuccess && transactionStep === "swapping") {
+    if (isBuySuccess && transactionStep === "buying") {
       setTransactionStep("success");
-      setIsSwapping(false);
-      toast.success(`${fromToken} to ${toToken} swap completed successfully!`);
+      setIsBuying(false);
+      // toast.success("Swap completed successfully!");
 
+      // Reset form after a short delay
       setTimeout(() => {
-        setFromAmount("");
-        setToAmount("");
-        refetchFromTokenBalance();
-        refetchToTokenBalance();
+        setUsdcAmount("");
+        setUsdlAmount("");
+        // Refetch balances
+        refetchUsdcBalance();
+        refetchUsdlBalance();
+      }, 2000);
+    }
+  }, [isBuySuccess, transactionStep]);
+  // Effect to handle buy success
+  useEffect(() => {
+    if (isBuySuccess && transactionStep === "buying") {
+      setTransactionStep("success");
+      setIsBuying(false);
+      toast.success("USDL purchased successfully!");
+
+      // Reset form after a short delay
+      setTimeout(() => {
+        setUsdcAmount("");
+        setUsdlAmount("");
+        // Refetch balances
+        refetchUsdcBalance();
+        refetchUsdlBalance();
       }, 2000);
 
+      // Reset transaction step to empty after 5 seconds
       setTimeout(() => {
         setTransactionStep("");
       }, 5000);
     }
-  }, [isSwapSuccess, transactionStep]);
+  }, [isBuySuccess, transactionStep]);
 
   const handleTransactionError = (message) => {
     setTransactionStep("error");
     setIsApproving(false);
-    setIsSwapping(false);
+    setIsBuying(false);
     console.error("Transaction error:", message);
 
+    // Reset transaction step to empty after 5 seconds
     setTimeout(() => {
       setTransactionStep("");
     }, 5000);
@@ -369,26 +361,26 @@ const SwapCard = () => {
     if (transactionStep === "approving" || isApproveLoading) {
       return "Approving...";
     }
-    if (transactionStep === "swapping" || isSwapLoading) {
-      return "Swapping...";
+    if (transactionStep === "buying" || isBuyLoading) {
+      return "Buying USDL...";
     }
     if (transactionStep === "success") {
-      return "Swap Successful!";
+      return "Buy Successful!";
     }
     if (transactionStep === "error") {
       return "Try Again";
     }
-    return `Swap ${fromToken} to ${toToken}`;
+    return "Buy";
   };
 
   const isButtonDisabled = () => {
     return (
-      !fromAmount ||
-      parseFloat(fromAmount) <= 0 ||
+      !usdcAmount ||
+      parseFloat(usdcAmount) <= 0 ||
       isApproving ||
-      isSwapping ||
+      isBuying ||
       isApproveLoading ||
-      isSwapLoading ||
+      isBuyLoading ||
       validateSwapAmount() !== null
     );
   };
@@ -409,41 +401,41 @@ const SwapCard = () => {
         <div className="inner p-5 h-full">
           <div className="flex flex-col gap-5">
             <div className="flex flex-col gap-2">
-              {/* From Token Input */}
               <div className="p-3 flex items-center justify-between relative gap-3 rounded-[10px] bg-[#060708]/30">
                 <div className="left">
-                  <p className="m-0 text-xs">You Pay</p>
+                  <p className="m-0 text-xs">You Spend</p>
                   <input
                     type="text"
                     placeholder="0.000"
-                    value={fromAmount}
-                    onChange={(e) => handleFromAmountChange(e.target.value)}
+                    value={usdcAmount}
+                    onChange={(e) => handleUsdcAmountChange(e.target.value)}
                     className="border-0 p-0 max-w-[200px] text-2xl bg-transparent p-0 outline-0 text-white placeholder:text-white"
                     disabled={
                       isApproving ||
-                      isSwapping ||
+                      isBuying ||
                       isApproveLoading ||
-                      isSwapLoading
+                      isBuyLoading
                     }
                   />
+                  {/* USDC Balance Display */}
                   {address && (
                     <>
                       <p className="m-0 text-xs text-gray-400 mt-1">
-                        {fromTokenBalanceLoading
+                        {usdcBalanceLoading
                           ? "Loading..."
-                          : fromTokenBalanceError
+                          : usdcBalanceError
                             ? "Error loading balance"
-                            : `Balance: ${formatBalance(fromTokenBalance)} ${fromToken}`}
+                            : `Balance: ${formatBalance(usdcBalance)} USDC`}
                       </p>
-                      {!fromTokenBalanceLoading && !fromTokenBalanceError && fromTokenBalance && (
+                      {!usdcBalanceLoading && !usdcBalanceError && usdcBalance && (
                         <div className="mt-2">
                           <button
                             onClick={handleInputMaxBalance}
                             disabled={
                               isApproving ||
-                              isSwapping ||
+                              isBuying ||
                               isApproveLoading ||
-                              isSwapLoading
+                              isBuyLoading
                             }
                             className="px-3 py-1 text-xs bg-blue-500 text-white rounded hover:bg-blue-600 transition-colors disabled:bg-gray-400 disabled:cursor-not-allowed"
                           >
@@ -455,69 +447,33 @@ const SwapCard = () => {
                   )}
                 </div>
                 <div className="right">
-                  <div className="dropdown dropdown-end">
-                    <div
-                      tabIndex={0}
-                      role="button"
-                      className="h-[38px] flex items-center gap-2 2xl:h-[43px] 2xl:text-[20px] text-[14px] border-[2px] border-[#F3F5F8] text-black bg-[#F3F5F8] rounded px-2 cursor-pointer"
-                      onClick={() => setFromToken(fromToken === "USDL" ? "RWAL" : "USDL")}
-                    >
-                      {fromToken} {downIcn}
-                    </div>
-                  </div>
+                  <p className="m-0 text-2xl text-white">USDC</p>
                 </div>
               </div>
-
-              {/* Switch Button */}
-              <div className="flex justify-center">
-                <button
-                  onClick={switchTokens}
-                  className="p-2 bg-[#060708]/30 rounded-full hover:bg-[#060708]/50 transition-colors"
-                  disabled={isApproving || isSwapping || isApproveLoading || isSwapLoading}
-                >
-                  <svg
-                    width="20"
-                    height="20"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    className="text-white"
-                  >
-                    <path
-                      d="M7 16V4M7 4L3 8M7 4L11 8M17 8V20M17 20L21 16M17 20L13 16"
-                      stroke="currentColor"
-                      strokeWidth="2"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    />
-                  </svg>
-                </button>
-              </div>
-
-              {/* To Token Input */}
               <div className="p-3 flex items-center justify-between relative gap-3 rounded-[10px] bg-[#060708]/30">
                 <div className="left">
                   <p className="m-0 text-xs">You Receive</p>
                   <input
                     type="text"
                     placeholder="0.000"
-                    value={getAmountOutMinimum()}
-                    onChange={(e) => handleToAmountChange(e.target.value)}
+                    value={usdlAmount}
+                    onChange={(e) => handleUsdlAmountChange(e.target.value)}
                     className="border-0 p-0 max-w-[200px] text-2xl bg-transparent p-0 outline-0 text-white placeholder:text-white"
                     disabled={
                       isApproving ||
-                      isSwapping ||
+                      isBuying ||
                       isApproveLoading ||
-                      isSwapLoading
+                      isBuyLoading
                     }
-                    readOnly
                   />
+                  {/* USDL Balance Display */}
                   {address && (
                     <p className="m-0 text-xs text-gray-400 mt-1">
-                      {toTokenBalanceLoading
+                      {usdlBalanceLoading
                         ? "Loading..."
-                        : toTokenBalanceError
+                        : usdlBalanceError
                           ? "Error loading balance"
-                          : `Balance: ${formatBalance(toTokenBalance)} ${toToken}`}
+                          : `Balance: ${formatBalance(usdlBalance)} USDL`}
                     </p>
                   )}
                 </div>
@@ -526,10 +482,9 @@ const SwapCard = () => {
                     <div
                       tabIndex={0}
                       role="button"
-                      className="h-[38px] flex items-center gap-2 2xl:h-[43px] 2xl:text-[20px] text-[14px] border-[2px] border-[#F3F5F8] text-black bg-[#F3F5F8] rounded px-2 cursor-pointer"
-                      onClick={() => setToToken(toToken === "USDL" ? "RWAL" : "USDL")}
+                      className="h-[38px] flex items-center gap-2 2xl:h-[43px] 2xl:text-[20px] text-[14px] border-[2px] border-[#F3F5F8] text-black bg-[#F3F5F8] rounded px-2"
                     >
-                      {toToken} {downIcn}
+                      USDL {downIcn}
                     </div>
                   </div>
                 </div>
@@ -542,11 +497,11 @@ const SwapCard = () => {
                 <div className="flex items-center justify-center">
                   <p className="m-0 text-xs text-center">
                     {transactionStep === "approving" &&
-                      `Step 1/2: Approving ${fromToken} spending...`}
-                    {transactionStep === "swapping" &&
-                      `Step 2/2: Executing ${fromToken} to ${toToken} swap...`}
+                      "Step 1/2: Approving USDC spending..."}
+                    {transactionStep === "buying" &&
+                      "Step 2/2: Executing Buy USDL..."}
                     {transactionStep === "success" &&
-                      `✅ ${fromToken} to ${toToken} swap completed successfully!`}
+                      "✅ USDL purchased successfully!"}
                     {transactionStep === "error" &&
                       "❌ Transaction failed. Click 'Try Again' to retry."}
                   </p>
@@ -554,45 +509,40 @@ const SwapCard = () => {
               </div>
             )}
 
-            {/* Swap Details */}
             <div className="px-5">
-              <div className="flex items-center justify-between mb-2">
-                <p className="m-0 flex items-center gap-2 text-xs">
-                  Pool Fee <span className="icn">{infoIcn}</span>
-                </p>
-                <p className="m-0 flex items-center gap-2 text-xs">0.05%</p>
-              </div>
               <div className="flex items-center justify-between">
                 <p className="m-0 flex items-center gap-2 text-xs">
-                  Slippage Tolerance <span className="icn">{infoIcn}</span>
+                  Buy Fee <span className="icn">{infoIcn}</span>
                 </p>
-                <p className="m-0 flex items-center gap-2 text-xs">{slippage}%</p>
+                <p className="m-0 flex items-center gap-2 text-xs">0%</p>
               </div>
             </div>
 
-            {/* Swap Button */}
             <div className="btnWrpper">
               {address ? (
-                <button
-                  onClick={getButtonAction()}
-                  disabled={isButtonDisabled()}
-                  className={`flex w-full items-center justify-center gap-3 h-[50px] rounded-[10px] transition duration-[400ms] font-medium px-4 min-w-[100px] border-[2px] ${
-                    isButtonDisabled()
+                <>
+                  <button
+                    onClick={getButtonAction()}
+                    disabled={isButtonDisabled()}
+                    className={`flex w-full items-center justify-center gap-3 h-[50px] rounded-[10px] transition duration-[400ms] font-medium px-4 min-w-[100px] border-[2px] ${isButtonDisabled()
                       ? "bg-gray-400 text-gray-600 border-gray-400 cursor-not-allowed"
                       : transactionStep === "success"
                         ? "bg-green-500 text-white border-green-500"
                         : "bg-white text-[#000] border-white hover:bg-transparent hover:text-white"
-                  }`}
-                >
-                  {getButtonText()}
-                </button>
+                      }`}
+                  >
+                    {getButtonText()}
+                  </button>
+                </>
               ) : (
-                <button
-                  onClick={connect}
-                  className="flex w-full items-center justify-center gap-3 h-[50px] rounded-[10px] bg-white text-[#000] transition duration-[400ms] font-medium px-4 min-w-[100px] border-[2px] border-[#F3F5F8] hover:bg-transparent hover:text-white"
-                >
-                  Connect Wallet
-                </button>
+                <>
+                  <button
+                    onClick={connect}
+                    className="flex w-full items-center justify-center gap-3 h-[50px] rounded-[10px] bg-white text-[#000] transition duration-[400ms] font-medium px-4 min-w-[100px] border-[2px] border-[#F3F5F8] hover:bg-transparent hover:text-white"
+                  >
+                    Connect Wallet
+                  </button>
+                </>
               )}
             </div>
           </div>
@@ -602,7 +552,7 @@ const SwapCard = () => {
   );
 };
 
-export default SwapCard;
+export default BuyCard;
 
 const infoIcn = (
   <svg
