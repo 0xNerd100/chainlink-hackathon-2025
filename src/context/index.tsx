@@ -3,7 +3,7 @@
 import { wagmiAdapter, projectId } from "@/config";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { createAppKit } from "@reown/appkit/react";
-import { mainnet, bsc, bscTestnet, sepolia, baseSepolia } from "@reown/appkit/networks";
+import { mainnet, bsc, bscTestnet } from "@reown/appkit/networks";
 import React, { type ReactNode } from "react";
 import { cookieToInitialState, WagmiProvider, type Config } from "wagmi";
 
@@ -16,9 +16,9 @@ if (!projectId) {
 
 // Set up metadata
 const metadata = {
-  name: "lender-fi-app",
-  description: "Lender Fi Application",
-  url: "https://lender-fi.com", // origin must match your domain & subdomain
+  name: "appkit-example",
+  description: "AppKit Example",
+  url: "https://appkitexampleapp.com", // origin must match your domain & subdomain
   icons: ["https://avatars.githubusercontent.com/u/179229932"],
 };
 
@@ -26,8 +26,8 @@ const metadata = {
 const modal = createAppKit({
   adapters: [wagmiAdapter],
   projectId,
-  networks: [mainnet, bsc, bscTestnet, sepolia, baseSepolia],
-  defaultNetwork: sepolia, // Changed to sepolia as default since you have config for it
+  networks: [mainnet, bsc, bscTestnet],
+  defaultNetwork: bscTestnet,
   metadata: metadata,
   features: {
     analytics: true, // Optional - defaults to your Cloud configuration
