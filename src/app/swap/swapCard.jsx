@@ -8,10 +8,9 @@ import {
   useWaitForTransactionReceipt,
 } from "wagmi";
 import { getContractAddress } from "../../config/contract";
-import { parseUnits, formatUnits } from "viem";
-import { ERC20_ABI , ROUTER_ABI } from "@/abi";
+import { parseUnits, formatUnits, encodePacked } from "viem";
+import { ERC20_ABI, ROUTER_ABI } from "@/abi";
 import { toast } from "react-toastify";
-
 
 const SwapCard = () => {
   const { open } = useAppKit();
@@ -29,8 +28,11 @@ const SwapCard = () => {
   // Get contract addresses for current network
   const USDL_ADDRESS = getContractAddress(chainId, "USDL");
   const RWAL_ADDRESS = getContractAddress(chainId, "RWAL");
-  const SWAP_ROUTER = "0xE592427A0AEce92De3Edee1F18E0157C05861564"; // Uniswap V3 SwapRouter
+  const SWAP_ROUTER = "0x3A9D48AB9751398BbFa63ad67599Bb04e4BdF98b"; // Universal Router
   const poolFee = 500; // 0.05%
+
+  // Universal Router command constants
+  const V3_SWAP_EXACT_IN = 0x00;
 
   // Get token addresses based on selection
   const getTokenAddress = (token) => {
@@ -104,7 +106,9 @@ const SwapCard = () => {
   const formatBalance = (balance) => {
     if (!balance) return "0.0000";
     try {
-      return (Number(balance.value) / Math.pow(10, balance.decimals)).toFixed(4);
+      return (Number(balance.value) / Math.pow(10, balance.decimals)).toFixed(
+        4
+      );
     } catch (error) {
       console.error("Error formatting balance:", error);
       return "0.0000";
@@ -119,7 +123,10 @@ const SwapCard = () => {
     }
 
     try {
-      const maxBalance = formatUnits(fromTokenBalance.value, fromTokenBalance.decimals);
+      const maxBalance = formatUnits(
+        fromTokenBalance.value,
+        fromTokenBalance.decimals
+      );
       setFromAmount(parseFloat(maxBalance).toFixed(6));
       // For simplicity, assuming 1:1 ratio. You can implement price fetching here
       // In real implementation, you'd fetch the current price from the pool
@@ -173,6 +180,14 @@ const SwapCard = () => {
     }
 
     return null;
+  };
+
+  // Helper function to encode V3 swap path
+  const encodePath = (tokenA, tokenB, fee) => {
+    return encodePacked(
+      ["address", "uint24", "address"],
+      [tokenA, fee, tokenB]
+    );
   };
 
   // Helper function to parse error messages
@@ -292,23 +307,43 @@ const SwapCard = () => {
         toTokenBalance?.decimals || 18
       );
 
-      // Step 2: Execute swap using exactInputSingle
-       writeSwap({
+      // Create the path for V3 swap
+      const path = encodePath(
+        getTokenAddress(fromToken),
+        getTokenAddress(toToken),
+        poolFee
+      );
+
+      // Encode the V3_SWAP_EXACT_IN command parameters
+      const swapParams = [
+        address, // recipient
+        amountInWei, // amountIn
+        amountOutMinimum, // amountOutMin
+        path, // path
+        false, // payerIsUser (false since we're using ERC20 tokens)
+      ];
+
+      // Encode the parameters for the V3 swap
+      const encodedSwapParams = encodePacked(
+        ["address", "uint256", "uint256", "bytes", "bool"],
+        swapParams
+      );
+
+      // Create commands array (single command)
+      const commands = `0x${V3_SWAP_EXACT_IN.toString(16).padStart(2, "0")}`;
+
+      // Create inputs array
+      const inputs = [encodedSwapParams];
+
+      // Calculate deadline (10 minutes from now)
+      const deadline = Math.floor(Date.now() / 1000) + 60 * 10;
+
+      // Step 2: Execute swap using Universal Router
+      writeSwap({
         address: SWAP_ROUTER,
         abi: ROUTER_ABI,
-        functionName: "exactInputSingle",
-        args: [
-          {
-            tokenIn: getTokenAddress(fromToken),
-            tokenOut: getTokenAddress(toToken),
-            fee: poolFee,
-            recipient: address,
-            deadline: Math.floor(Date.now() / 1000) + 60 * 10, // 10 minutes
-            amountIn: amountInWei,
-            amountOutMinimum: amountOutMinimum,
-            sqrtPriceLimitX96: 0,
-          },
-        ],
+        functionName: "execute",
+        args: [commands, inputs, deadline],
       });
     } catch (error) {
       console.error("Swap failed:", error);
@@ -432,25 +467,29 @@ const SwapCard = () => {
                         {fromTokenBalanceLoading
                           ? "Loading..."
                           : fromTokenBalanceError
-                            ? "Error loading balance"
-                            : `Balance: ${formatBalance(fromTokenBalance)} ${fromToken}`}
+                          ? "Error loading balance"
+                          : `Balance: ${formatBalance(
+                              fromTokenBalance
+                            )} ${fromToken}`}
                       </p>
-                      {!fromTokenBalanceLoading && !fromTokenBalanceError && fromTokenBalance && (
-                        <div className="mt-2">
-                          <button
-                            onClick={handleInputMaxBalance}
-                            disabled={
-                              isApproving ||
-                              isSwapping ||
-                              isApproveLoading ||
-                              isSwapLoading
-                            }
-                            className="px-3 py-1 text-xs bg-blue-500 text-white rounded hover:bg-blue-600 transition-colors disabled:bg-gray-400 disabled:cursor-not-allowed"
-                          >
-                            Max
-                          </button>
-                        </div>
-                      )}
+                      {!fromTokenBalanceLoading &&
+                        !fromTokenBalanceError &&
+                        fromTokenBalance && (
+                          <div className="mt-2">
+                            <button
+                              onClick={handleInputMaxBalance}
+                              disabled={
+                                isApproving ||
+                                isSwapping ||
+                                isApproveLoading ||
+                                isSwapLoading
+                              }
+                              className="px-3 py-1 text-xs bg-blue-500 text-white rounded hover:bg-blue-600 transition-colors disabled:bg-gray-400 disabled:cursor-not-allowed"
+                            >
+                              Max
+                            </button>
+                          </div>
+                        )}
                     </>
                   )}
                 </div>
@@ -460,7 +499,9 @@ const SwapCard = () => {
                       tabIndex={0}
                       role="button"
                       className="h-[38px] flex items-center gap-2 2xl:h-[43px] 2xl:text-[20px] text-[14px] border-[2px] border-[#F3F5F8] text-black bg-[#F3F5F8] rounded px-2 cursor-pointer"
-                      onClick={() => setFromToken(fromToken === "USDL" ? "RWAL" : "USDL")}
+                      onClick={() =>
+                        setFromToken(fromToken === "USDL" ? "RWAL" : "USDL")
+                      }
                     >
                       {fromToken} {downIcn}
                     </div>
@@ -473,7 +514,12 @@ const SwapCard = () => {
                 <button
                   onClick={switchTokens}
                   className="p-2 bg-[#060708]/30 rounded-full hover:bg-[#060708]/50 transition-colors"
-                  disabled={isApproving || isSwapping || isApproveLoading || isSwapLoading}
+                  disabled={
+                    isApproving ||
+                    isSwapping ||
+                    isApproveLoading ||
+                    isSwapLoading
+                  }
                 >
                   <svg
                     width="20"
@@ -516,8 +562,10 @@ const SwapCard = () => {
                       {toTokenBalanceLoading
                         ? "Loading..."
                         : toTokenBalanceError
-                          ? "Error loading balance"
-                          : `Balance: ${formatBalance(toTokenBalance)} ${toToken}`}
+                        ? "Error loading balance"
+                        : `Balance: ${formatBalance(
+                            toTokenBalance
+                          )} ${toToken}`}
                     </p>
                   )}
                 </div>
@@ -527,7 +575,9 @@ const SwapCard = () => {
                       tabIndex={0}
                       role="button"
                       className="h-[38px] flex items-center gap-2 2xl:h-[43px] 2xl:text-[20px] text-[14px] border-[2px] border-[#F3F5F8] text-black bg-[#F3F5F8] rounded px-2 cursor-pointer"
-                      onClick={() => setToToken(toToken === "USDL" ? "RWAL" : "USDL")}
+                      onClick={() =>
+                        setToToken(toToken === "USDL" ? "RWAL" : "USDL")
+                      }
                     >
                       {toToken} {downIcn}
                     </div>
@@ -566,7 +616,9 @@ const SwapCard = () => {
                 <p className="m-0 flex items-center gap-2 text-xs">
                   Slippage Tolerance <span className="icn">{infoIcn}</span>
                 </p>
-                <p className="m-0 flex items-center gap-2 text-xs">{slippage}%</p>
+                <p className="m-0 flex items-center gap-2 text-xs">
+                  {slippage}%
+                </p>
               </div>
             </div>
 
@@ -580,8 +632,8 @@ const SwapCard = () => {
                     isButtonDisabled()
                       ? "bg-gray-400 text-gray-600 border-gray-400 cursor-not-allowed"
                       : transactionStep === "success"
-                        ? "bg-green-500 text-white border-green-500"
-                        : "bg-white text-[#000] border-white hover:bg-transparent hover:text-white"
+                      ? "bg-green-500 text-white border-green-500"
+                      : "bg-white text-[#000] border-white hover:bg-transparent hover:text-white"
                   }`}
                 >
                   {getButtonText()}
