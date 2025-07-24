@@ -23,4 +23,10 @@ export const TOKEN_ADDRESSES = {
     USDT: '0x7ef95a0FEE0Dd31b22626fA2e10Ee6A223F8a684' as `0x${string}`,
     USDC: '0x64544969ed7EBf5f083679233325356EbE738930' as `0x${string}`,
   },
+
+  // Avalanche Fuji Testnet (43113)
+ 43113: {
+    USDT: '0x9702230A8Ea53601f5cD2dc00fDBc13d4dF4A8c7' as `0x${string}`,
+    USDC: '0xB97EF9Ef8734C71904D8002F8b6Bc66Dd9c48a6E' as `0x${string}`,
+  }
 } as const;

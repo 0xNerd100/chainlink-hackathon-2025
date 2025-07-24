@@ -6,15 +6,16 @@ import {
   useChainId,
   useWriteContract,
   useWaitForTransactionReceipt,
+  useReadContract,
 } from "wagmi";
 import { getContractAddress } from "../../config/contract";
-import { parseUnits, formatUnits, encodePacked } from "viem";
+import { parseUnits, formatUnits } from "viem";
 import { ERC20_ABI, ROUTER_ABI } from "@/abi";
 import { toast } from "react-toastify";
 
 const SwapCard = () => {
   const { open } = useAppKit();
-  const { address, isConnected } = useAccount();
+  const { address } = useAccount();
   const chainId = useChainId();
   const [fromAmount, setFromAmount] = useState("");
   const [toAmount, setToAmount] = useState("");
@@ -22,18 +23,15 @@ const SwapCard = () => {
   const [toToken, setToToken] = useState("RWAL");
   const [isApproving, setIsApproving] = useState(false);
   const [isSwapping, setIsSwapping] = useState(false);
-  const [transactionStep, setTransactionStep] = useState(""); // "approving", "swapping", "success", "error"
-  const [slippage, setSlippage] = useState(5); // 5% slippage tolerance
+  const [transactionStep, setTransactionStep] = useState("");
+  const [slippage, setSlippage] = useState(5);
+
 
   // Get contract addresses for current network
   const USDL_ADDRESS = getContractAddress(chainId, "USDL");
   const RWAL_ADDRESS = getContractAddress(chainId, "RWAL");
-  const SWAP_ROUTER = "0x3A9D48AB9751398BbFa63ad67599Bb04e4BdF98b"; // Universal Router
-  const poolFee = 500; // 0.05%
-
-  // Universal Router command constants for V4
-  const V4_SWAP = 0x604; // Command for V4 swaps
-
+  const SWAP_ROUTER = "0x3bFA4769FB09eefC5a80d6E87c3B9C650f7Ae48E";
+  const poolFee = 3000; // 0.3% 
   // Get token addresses based on selection
   const getTokenAddress = (token) => {
     return token === "USDL" ? USDL_ADDRESS : RWAL_ADDRESS;
@@ -48,6 +46,7 @@ const SwapCard = () => {
   const {
     writeContract: writeSwap,
     data: swapHash,
+
     error: swapError,
   } = useWriteContract();
 
@@ -64,11 +63,27 @@ const SwapCard = () => {
     isLoading: isSwapLoading,
     isSuccess: isSwapSuccess,
     error: swapReceiptError,
+    data: swapReceipt,
   } = useWaitForTransactionReceipt({
     hash: swapHash,
   });
 
-  // Get FROM token balance
+  // Check if tokens exist and have proper decimals
+  const { data: fromTokenDecimals } = useReadContract({
+    address: getTokenAddress(fromToken),
+    abi: ERC20_ABI,
+    functionName: "decimals",
+    query: { enabled: !!getTokenAddress(fromToken) },
+  });
+
+  const { data: toTokenDecimals } = useReadContract({
+    address: getTokenAddress(toToken),
+    abi: ERC20_ABI,
+    functionName: "decimals",
+    query: { enabled: !!getTokenAddress(toToken) },
+  });
+
+  // Enhanced balance fetching with forced refresh
   const {
     data: fromTokenBalance,
     isLoading: fromTokenBalanceLoading,
@@ -78,12 +93,11 @@ const SwapCard = () => {
     address: address,
     token: getTokenAddress(fromToken),
     query: {
-      enabled: !!address,
-      refetchInterval: 10000,
+      enabled: !!address && !!getTokenAddress(fromToken),
+      refetchInterval: 5000, // Reduced interval for faster updates
     },
   });
 
-  // Get TO token balance
   const {
     data: toTokenBalance,
     isLoading: toTokenBalanceLoading,
@@ -93,29 +107,27 @@ const SwapCard = () => {
     address: address,
     token: getTokenAddress(toToken),
     query: {
-      enabled: !!address,
-      refetchInterval: 10000,
+      enabled: !!address && !!getTokenAddress(toToken),
+      refetchInterval: 5000,
     },
   });
-
-  const connect = async () => {
+ const connect = async () => {
     await open();
   };
 
-  // Helper function to format balance
+  // Helper function to format balance with proper decimals
   const formatBalance = (balance) => {
     if (!balance) return "0.0000";
     try {
       return (Number(balance.value) / Math.pow(10, balance.decimals)).toFixed(
         4
-      );
+      );;
     } catch (error) {
       console.error("Error formatting balance:", error);
       return "0.0000";
     }
   };
 
-  // Handle Max button click
   const handleInputMaxBalance = () => {
     if (!fromTokenBalance) {
       toast.error("Unable to fetch balance");
@@ -123,13 +135,8 @@ const SwapCard = () => {
     }
 
     try {
-      const maxBalance = formatUnits(
-        fromTokenBalance.value,
-        fromTokenBalance.decimals
-      );
+      const maxBalance = formatUnits(fromTokenBalance.value, fromTokenBalance.decimals);
       setFromAmount(parseFloat(maxBalance).toFixed(6));
-      // For simplicity, assuming 1:1 ratio. You can implement price fetching here
-      // In real implementation, you'd fetch the current price from the pool
       setToAmount(parseFloat(maxBalance).toFixed(6));
     } catch (error) {
       console.error("Error setting max balance:", error);
@@ -137,32 +144,35 @@ const SwapCard = () => {
     }
   };
 
-  // Handle switching tokens
-  const switchTokens = () => {
-    setFromToken(toToken);
-    setToToken(fromToken);
-    setFromAmount(toAmount);
-    setToAmount(fromAmount);
-  };
 
-  const handleFromAmountChange = (value) => {
-    setFromAmount(value);
-    // For simplicity, assuming 1:1 ratio. You can implement price fetching here
-    // In real implementation, you'd fetch the current price from the pool
-    setToAmount(value);
-  };
 
-  // Calculate amountOutMinimum based on toAmount and slippage
+ const handleFromAmountChange = (value) => {
+  setFromAmount(value);
+  // For now, keeping 1:1 ratio, but you could add price calculation logic here
+  setToAmount(value);
+};
+
+const switchTokens = () => {
+  // Store current values
+  const tempFromToken = fromToken;
+  const tempFromAmount = fromAmount;
+  const tempToAmount = getAmountOutMinimum();
+  
+  // Switch tokens
+  setFromToken(toToken);
+  setToToken(tempFromToken);
+  
+  // Switch amounts - the current "to" amount becomes the new "from" amount
+  // and the current "from" amount becomes the new "to" amount
+  setFromAmount(tempToAmount);
+  setToAmount(tempToAmount);
+};
+
+
   const getAmountOutMinimum = () => {
     if (!toAmount || parseFloat(toAmount) <= 0) return "";
     const amountOut = parseFloat(toAmount) * (1 - slippage / 100);
     return amountOut.toFixed(6);
-  };
-
-  const handleToAmountChange = (value) => {
-    setToAmount(value);
-    // For simplicity, assuming 1:1 ratio
-    setFromAmount(value);
   };
 
   const validateSwapAmount = () => {
@@ -179,56 +189,38 @@ const SwapCard = () => {
       return `Insufficient ${fromToken} balance`;
     }
 
+    // Check if tokens exist
+    if (!getTokenAddress(fromToken) || !getTokenAddress(toToken)) {
+      return "Invalid token addresses";
+    }
+
     return null;
   };
 
-  // Helper function to encode V4 swap parameters
-  const encodeV4SwapParams = (
-    recipient,
-    amountIn,
-    amountOutMinimum,
-    tokenIn,
-    tokenOut,
-    fee
-  ) => {
-    // For V4_SWAP, we need to encode the swap parameters according to V4 specification
-    // This typically includes: recipient, amountIn, amountOutMinimum, tokenIn, tokenOut, fee, and other V4-specific params
-    const params = encodePacked(
-      ["address", "uint256", "uint256", "address", "address", "uint24"],
-      [recipient, amountIn, amountOutMinimum, tokenIn, tokenOut, fee]
-    );
-    return params;
-  };
-
-  // Helper function to parse error messages
   const parseErrorMessage = (error) => {
     if (!error) return "Unknown error occurred";
 
     if (error.message) {
-      if (
-        error.message.includes("User rejected") ||
-        error.message.includes("user rejected")
-      ) {
+      if (error.message.includes("User rejected") || error.message.includes("user rejected")) {
         return "Transaction was rejected by user";
       }
-
       if (error.message.includes("insufficient funds")) {
         return "Insufficient funds for transaction";
       }
-
       if (error.message.includes("gas")) {
         return "Gas estimation failed. Please try again";
       }
-
       if (error.message.includes("network")) {
         return "Network error. Please check your connection";
       }
-
+      // Add more specific error handling for Uniswap
+      if (error.message.includes("STF")) {
+        return "Swap failed - insufficient liquidity or invalid pool";
+      }
+      if (error.message.includes("Too little received")) {
+        return "Swap failed - price impact too high, try increasing slippage";
+      }
       return error.message;
-    }
-
-    if (typeof error === "string") {
-      return error;
     }
 
     return "Transaction failed. Please try again";
@@ -241,14 +233,24 @@ const SwapCard = () => {
       return;
     }
 
+    // Debug logging
+    console.log("Starting swap:", {
+      fromToken,
+      toToken,
+      fromAmount,
+      fromTokenAddress: getTokenAddress(fromToken),
+      toTokenAddress: getTokenAddress(toToken),
+      fromTokenDecimals,
+      toTokenDecimals,
+    });
+
     try {
       setTransactionStep("approving");
       setIsApproving(true);
 
-      // Convert amount to wei
       const amountInWei = parseUnits(fromAmount, fromTokenBalance.decimals);
+      console.log("Amount in wei:", amountInWei.toString());
 
-      // Step 1: Approve token spending
       writeApprove({
         address: getTokenAddress(fromToken),
         abi: ERC20_ABI,
@@ -263,14 +265,12 @@ const SwapCard = () => {
     }
   };
 
-  // Effect to handle approval success and trigger swap
   useEffect(() => {
     if (isApproveSuccess && transactionStep === "approving") {
       handleSwapExecution();
     }
   }, [isApproveSuccess, transactionStep]);
 
-  // Effect to handle approval errors
   useEffect(() => {
     if (approveError && transactionStep === "approving") {
       const errorMessage = parseErrorMessage(approveError);
@@ -279,7 +279,6 @@ const SwapCard = () => {
     }
   }, [approveError, transactionStep]);
 
-  // Effect to handle swap errors
   useEffect(() => {
     if (swapError && transactionStep === "swapping") {
       const errorMessage = parseErrorMessage(swapError);
@@ -288,23 +287,6 @@ const SwapCard = () => {
     }
   }, [swapError, transactionStep]);
 
-  // Effect to handle receipt errors
-  useEffect(() => {
-    if (approveReceiptError && transactionStep === "approving") {
-      const errorMessage = parseErrorMessage(approveReceiptError);
-      handleTransactionError(errorMessage);
-      toast.error(errorMessage);
-    }
-  }, [approveReceiptError, transactionStep]);
-
-  useEffect(() => {
-    if (swapReceiptError && transactionStep === "swapping") {
-      const errorMessage = parseErrorMessage(swapReceiptError);
-      handleTransactionError(errorMessage);
-      toast.error(errorMessage);
-    }
-  }, [swapReceiptError, transactionStep]);
-
   const handleSwapExecution = async () => {
     try {
       setTransactionStep("swapping");
@@ -312,36 +294,40 @@ const SwapCard = () => {
       setIsSwapping(true);
 
       const amountInWei = parseUnits(fromAmount, fromTokenBalance.decimals);
+
+      // Use proper decimals for toToken
+      const toTokenDecimalsToUse = toTokenDecimals || toTokenBalance?.decimals || 18;
       const amountOutMinimum = parseUnits(
         (parseFloat(toAmount) * (1 - slippage / 100)).toString(),
-        toTokenBalance?.decimals || 18
+        toTokenDecimalsToUse
       );
 
-      // Encode V4 swap parameters
-      const v4SwapParams = encodeV4SwapParams(
-        address, // recipient
-        amountInWei, // amountIn
-        amountOutMinimum, // amountOutMinimum
-        getTokenAddress(fromToken), // tokenIn
-        getTokenAddress(toToken), // tokenOut
-        poolFee // fee
-      );
+      console.log("Swap parameters:", {
+        tokenIn: getTokenAddress(fromToken),
+        tokenOut: getTokenAddress(toToken),
+        fee: poolFee,
+        recipient: address,
+        amountIn: amountInWei.toString(),
+        amountOutMinimum: 0,
+        sqrtPriceLimitX96: 0,
+      });
 
-      // Create commands array with V4_SWAP command (0x604)
-      const commands = `0x${V4_SWAP.toString(16).padStart(4, "0").slice(-2)}`;
-
-      // Create inputs array with encoded V4 swap parameters
-      const inputs = [v4SwapParams];
-
-      // Calculate deadline (10 minutes from now)
-      const deadline = Math.floor(Date.now() / 1000) + 60 * 10;
-
-      // Execute swap using Universal Router with V4_SWAP command
       writeSwap({
         address: SWAP_ROUTER,
         abi: ROUTER_ABI,
-        functionName: "execute",
-        args: [commands, inputs, deadline],
+        functionName: "exactInputSingle",
+        args: [
+          {
+            tokenIn: getTokenAddress(fromToken),
+            tokenOut: getTokenAddress(toToken),
+            fee: poolFee,
+            recipient: address,
+            deadline: Math.floor(Date.now() / 1000) + 60 * 10,
+            amountIn: amountInWei,
+            amountOutMinimum: amountOutMinimum,
+            sqrtPriceLimitX96: 0,
+          },
+        ],
       });
     } catch (error) {
       console.error("Swap failed:", error);
@@ -357,19 +343,19 @@ const SwapCard = () => {
     setIsSwapping(false);
   };
 
-  const resetAfterSuccess = () => {
-    setTransactionStep("");
-    setIsApproving(false);
-    setIsSwapping(false);
-    setFromAmount("");
-    setToAmount("");
-    refetchFromTokenBalance();
-    refetchToTokenBalance();
+  const forceBalanceRefresh = async () => {
+    console.log("Forcing balance refresh...");
+    await Promise.all([
+      refetchFromTokenBalance(),
+      refetchToTokenBalance(),
+    ]);
   };
 
-  // Effect to handle swap success
+  // Enhanced success handling with forced refresh
   useEffect(() => {
     if (isSwapSuccess && transactionStep === "swapping") {
+      console.log("Swap successful! Hash:", swapHash);
+
       setTransactionStep("success");
       setIsSwapping(false);
       toast.success(`${fromToken} to ${toToken} swap completed successfully!`);
@@ -377,13 +363,11 @@ const SwapCard = () => {
       setTimeout(() => {
         setFromAmount("");
         setToAmount("");
-        refetchFromTokenBalance();
-        refetchToTokenBalance();
-      }, 2000);
+      }, 3000);
 
       setTimeout(() => {
         setTransactionStep("");
-      }, 5000);
+      }, 8000);
     }
   }, [isSwapSuccess, transactionStep]);
 
@@ -392,10 +376,7 @@ const SwapCard = () => {
     setIsApproving(false);
     setIsSwapping(false);
     console.error("Transaction error:", message);
-
-    setTimeout(() => {
-      setTransactionStep("");
-    }, 5000);
+    setTimeout(() => setTransactionStep(""), 5000);
   };
 
   const getButtonText = () => {
@@ -431,7 +412,7 @@ const SwapCard = () => {
       return resetTransaction;
     }
     if (transactionStep === "success") {
-      return resetAfterSuccess;
+      return forceBalanceRefresh;
     }
     return handleSwap;
   };
@@ -441,6 +422,8 @@ const SwapCard = () => {
       <div className="box h-full">
         <div className="inner p-5 h-full">
           <div className="flex flex-col gap-5">
+
+
             <div className="flex flex-col gap-2">
               {/* From Token Input */}
               <div className="p-3 flex items-center justify-between relative gap-3 rounded-[10px] bg-[#060708]/30">
@@ -452,12 +435,7 @@ const SwapCard = () => {
                     value={fromAmount}
                     onChange={(e) => handleFromAmountChange(e.target.value)}
                     className="border-0 p-0 max-w-[200px] text-2xl bg-transparent p-0 outline-0 text-white placeholder:text-white"
-                    disabled={
-                      isApproving ||
-                      isSwapping ||
-                      isApproveLoading ||
-                      isSwapLoading
-                    }
+                    disabled={isApproving || isSwapping || isApproveLoading || isSwapLoading}
                   />
                   {address && (
                     <>
@@ -465,29 +443,20 @@ const SwapCard = () => {
                         {fromTokenBalanceLoading
                           ? "Loading..."
                           : fromTokenBalanceError
-                          ? "Error loading balance"
-                          : `Balance: ${formatBalance(
-                              fromTokenBalance
-                            )} ${fromToken}`}
+                            ? `Error: ${fromTokenBalanceError.message}`
+                            : `Balance: ${formatBalance(fromTokenBalance)} ${fromToken}`}
                       </p>
-                      {!fromTokenBalanceLoading &&
-                        !fromTokenBalanceError &&
-                        fromTokenBalance && (
-                          <div className="mt-2">
-                            <button
-                              onClick={handleInputMaxBalance}
-                              disabled={
-                                isApproving ||
-                                isSwapping ||
-                                isApproveLoading ||
-                                isSwapLoading
-                              }
-                              className="px-3 py-1 text-xs bg-blue-500 text-white rounded hover:bg-blue-600 transition-colors disabled:bg-gray-400 disabled:cursor-not-allowed"
-                            >
-                              Max
-                            </button>
-                          </div>
-                        )}
+                      {!fromTokenBalanceLoading && !fromTokenBalanceError && fromTokenBalance && (
+                        <div className="mt-2">
+                          <button
+                            onClick={handleInputMaxBalance}
+                            disabled={isApproving || isSwapping || isApproveLoading || isSwapLoading}
+                            className="px-3 py-1 text-xs bg-blue-500 text-white rounded hover:bg-blue-600 transition-colors disabled:bg-gray-400 disabled:cursor-not-allowed"
+                          >
+                            Max
+                          </button>
+                        </div>
+                      )}
                     </>
                   )}
                 </div>
@@ -497,11 +466,9 @@ const SwapCard = () => {
                       tabIndex={0}
                       role="button"
                       className="h-[38px] flex items-center gap-2 2xl:h-[43px] 2xl:text-[20px] text-[14px] border-[2px] border-[#F3F5F8] text-black bg-[#F3F5F8] rounded px-2 cursor-pointer"
-                      onClick={() =>
-                        setFromToken(fromToken === "USDL" ? "RWAL" : "USDL")
-                      }
+                      onClick={() => setFromToken(fromToken === "USDL" ? "RWAL" : "USDL")}
                     >
-                      {fromToken} {downIcn}
+                      {fromToken} 
                     </div>
                   </div>
                 </div>
@@ -512,20 +479,9 @@ const SwapCard = () => {
                 <button
                   onClick={switchTokens}
                   className="p-2 bg-[#060708]/30 rounded-full hover:bg-[#060708]/50 transition-colors"
-                  disabled={
-                    isApproving ||
-                    isSwapping ||
-                    isApproveLoading ||
-                    isSwapLoading
-                  }
+                  disabled={isApproving || isSwapping || isApproveLoading || isSwapLoading}
                 >
-                  <svg
-                    width="20"
-                    height="20"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    className="text-white"
-                  >
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" className="text-white">
                     <path
                       d="M7 16V4M7 4L3 8M7 4L11 8M17 8V20M17 20L21 16M17 20L13 16"
                       stroke="currentColor"
@@ -540,19 +496,13 @@ const SwapCard = () => {
               {/* To Token Input */}
               <div className="p-3 flex items-center justify-between relative gap-3 rounded-[10px] bg-[#060708]/30">
                 <div className="left">
-                  <p className="m-0 text-xs">You Receive</p>
+                  <p className="m-0 text-xs">You Receive (min)</p>
                   <input
                     type="text"
                     placeholder="0.000"
                     value={getAmountOutMinimum()}
-                    onChange={(e) => handleToAmountChange(e.target.value)}
                     className="border-0 p-0 max-w-[200px] text-2xl bg-transparent p-0 outline-0 text-white placeholder:text-white"
-                    disabled={
-                      isApproving ||
-                      isSwapping ||
-                      isApproveLoading ||
-                      isSwapLoading
-                    }
+                    disabled={true}
                     readOnly
                   />
                   {address && (
@@ -560,10 +510,8 @@ const SwapCard = () => {
                       {toTokenBalanceLoading
                         ? "Loading..."
                         : toTokenBalanceError
-                        ? "Error loading balance"
-                        : `Balance: ${formatBalance(
-                            toTokenBalance
-                          )} ${toToken}`}
+                          ? `Error: ${toTokenBalanceError.message}`
+                          : `Balance: ${formatBalance(toTokenBalance)} ${toToken}`}
                     </p>
                   )}
                 </div>
@@ -573,11 +521,9 @@ const SwapCard = () => {
                       tabIndex={0}
                       role="button"
                       className="h-[38px] flex items-center gap-2 2xl:h-[43px] 2xl:text-[20px] text-[14px] border-[2px] border-[#F3F5F8] text-black bg-[#F3F5F8] rounded px-2 cursor-pointer"
-                      onClick={() =>
-                        setToToken(toToken === "USDL" ? "RWAL" : "USDL")
-                      }
+                      onClick={() => setToToken(toToken === "USDL" ? "RWAL" : "USDL")}
                     >
-                      {toToken} {downIcn}
+                      {toToken} 
                     </div>
                   </div>
                 </div>
@@ -589,14 +535,10 @@ const SwapCard = () => {
               <div className="px-5">
                 <div className="flex items-center justify-center">
                   <p className="m-0 text-xs text-center">
-                    {transactionStep === "approving" &&
-                      `Step 1/2: Approving ${fromToken} spending...`}
-                    {transactionStep === "swapping" &&
-                      `Step 2/2: Executing V4 ${fromToken} to ${toToken} swap...`}
-                    {transactionStep === "success" &&
-                      `✅ ${fromToken} to ${toToken} swap completed successfully!`}
-                    {transactionStep === "error" &&
-                      "❌ Transaction failed. Click 'Try Again' to retry."}
+                    {transactionStep === "approving" && `Step 1/2: Approving ${fromToken} spending...`}
+                    {transactionStep === "swapping" && `Step 2/2: Executing ${fromToken} to ${toToken} swap...`}
+                    {transactionStep === "success" && `✅ ${fromToken} to ${toToken} swap completed successfully!`}
+                    {transactionStep === "error" && "❌ Transaction failed. Click 'Try Again' to retry."}
                   </p>
                 </div>
               </div>
@@ -606,17 +548,15 @@ const SwapCard = () => {
             <div className="px-5">
               <div className="flex items-center justify-between mb-2">
                 <p className="m-0 flex items-center gap-2 text-xs">
-                  Pool Fee (V4) <span className="icn">{infoIcn}</span>
+                  Pool Fee <span className="icn">{infoIcn}</span>
                 </p>
-                <p className="m-0 flex items-center gap-2 text-xs">0.05%</p>
+                <p className="m-0 flex items-center gap-2 text-xs">0.3%</p>
               </div>
               <div className="flex items-center justify-between">
                 <p className="m-0 flex items-center gap-2 text-xs">
                   Slippage Tolerance <span className="icn">{infoIcn}</span>
                 </p>
-                <p className="m-0 flex items-center gap-2 text-xs">
-                  {slippage}%
-                </p>
+                <p className="m-0 flex items-center gap-2 text-xs">{slippage}%</p>
               </div>
             </div>
 
@@ -626,15 +566,14 @@ const SwapCard = () => {
                 <button
                   onClick={getButtonAction()}
                   disabled={isButtonDisabled()}
-                  className={`flex w-full items-center justify-center gap-3 h-[50px] rounded-[10px] transition duration-[400ms] font-medium px-4 min-w-[100px] border-[2px] ${
-                    isButtonDisabled()
-                      ? "bg-gray-400 text-gray-600 border-gray-400 cursor-not-allowed"
-                      : transactionStep === "success"
+                  className={`flex w-full items-center justify-center gap-3 h-[50px] rounded-[10px] transition duration-[400ms] font-medium px-4 min-w-[100px] border-[2px] ${isButtonDisabled()
+                    ? "bg-gray-400 text-gray-600 border-gray-400 cursor-not-allowed"
+                    : transactionStep === "success"
                       ? "bg-green-500 text-white border-green-500"
                       : "bg-white text-[#000] border-white hover:bg-transparent hover:text-white"
-                  }`}
+                    }`}
                 >
-                  {getButtonText()}
+                  {transactionStep === "success" ? "Refresh Balances" : getButtonText()}
                 </button>
               ) : (
                 <button
@@ -655,13 +594,7 @@ const SwapCard = () => {
 export default SwapCard;
 
 const infoIcn = (
-  <svg
-    width="14"
-    height="14"
-    viewBox="0 0 14 14"
-    fill="none"
-    xmlns="http://www.w3.org/2000/svg"
-  >
+  <svg width="14" height="14" viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg">
     <path
       d="M7 13C10.3138 13 13 10.3138 13 7C13 3.68629 10.3138 1 7 1C3.68629 1 1 3.68629 1 7C1 10.3138 3.68629 13 7 13Z"
       stroke="white"
@@ -694,13 +627,7 @@ const infoIcn = (
 );
 
 const downIcn = (
-  <svg
-    width="15"
-    height="8"
-    viewBox="0 0 15 8"
-    fill="none"
-    xmlns="http://www.w3.org/2000/svg"
-  >
+  <svg width="15" height="8" viewBox="0 0 15 8" fill="none" xmlns="http://www.w3.org/2000/svg">
     <path
       d="M2 1.5L7.5 5.5L13 1.56897"
       stroke="#000"

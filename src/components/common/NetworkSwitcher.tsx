@@ -7,7 +7,11 @@ import styled from "styled-components";
 const logo = {
   ETH: "/assets/media/eth.svg",
   BNB: "/assets/media/bnb.svg",
-  SepoliaETH: "/assets/media/eth.svg", // Using same ETH logo for Sepolia
+  SepoliaETH: "/assets/media/eth.svg", 
+  BaseSepoliaETH: "/assets/media/eth.svg", // Using same ETH logo for Base Sepolia
+  BSC: "/assets/media/bnb.svg", // BNB logo for BSC
+  AVAX: "/assets/media/eth.svg", // Using same ETH logo for Avalanche Fuji
+  // Using same ETH logo for Sepolia
 };
 
 const networkNames = {
@@ -15,6 +19,8 @@ const networkNames = {
   56: "BNB", // BSC Mainnet
   11155111: "SepoliaETH", // Ethereum Sepolia Testnet
   84532: "BaseSepoliaETH", // Base Sepolia Testnet
+  97: "BSC", // BSC Testnet
+  43113: "AVAX", // Avalanche Fuji Testnet
 };
 
 function NetworkSwitcher() {

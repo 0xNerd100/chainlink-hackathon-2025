@@ -484,7 +484,7 @@ const BuyCard = () => {
                       role="button"
                       className="h-[38px] flex items-center gap-2 2xl:h-[43px] 2xl:text-[20px] text-[14px] border-[2px] border-[#F3F5F8] text-black bg-[#F3F5F8] rounded px-2"
                     >
-                      USDL {downIcn}
+                      USDL 
                     </div>
                   </div>
                 </div>

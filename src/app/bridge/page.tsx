@@ -1,10 +1,9 @@
 "use client";
 import React, { useState, useEffect } from "react";
 import { useAccount, useBalance, useSwitchChain } from "wagmi";
-import { formatEther, parseEther } from "viem";
+import { formatEther, parseEther, formatUnits } from "viem";
 import { useBridgeHelper, FeeType, BridgeParams } from "./bridgeHelper";
 import { toast } from "react-toastify";
-
 
 
 // Updated network configurations to match bridgeHelper
@@ -20,6 +19,18 @@ const NETWORKS = {
     name: "Base Sepolia",
     chainId: 84532,
     key: "baseSepolia" as const,
+  },
+  avalancheFuji: {
+    id: 43113,
+    name: "Avalanche Fuji",
+    chainId: 43113,
+    key: "avalancheFuji" as const,
+  },
+  bscTestnet: {
+    id: 97,
+    name: "BSC Testnet",
+    chainId: 97,
+    key: "bscTestnet" as const,
   }
 } as const;
 
@@ -29,8 +40,6 @@ type NetworkType = (typeof NETWORKS)[keyof typeof NETWORKS];
 const Bridge = () => {
   const { address, chain } = useAccount();
   const { switchChain } = useSwitchChain();
-  const [recipientAddress, setRecipientAddress] = useState("");
-  const [useCustomRecipient, setUseCustomRecipient] = useState(false);
   const {
     bridgeTokens,
     estimateFee,
@@ -39,6 +48,7 @@ const Bridge = () => {
     getAvailableTokens,
     getDestinationToken,
     canBridgeToken,
+    isValidAddress,
     TOKEN_METADATA,
     TOKEN_ADDRESSES,
     NETWORK_CONFIG,
@@ -58,6 +68,11 @@ const Bridge = () => {
   const [isToDropdownOpen, setIsToDropdownOpen] = useState(false);
   const [isTokenDropdownOpen, setIsTokenDropdownOpen] = useState(false);
   const [isFeeEstimating, setIsFeeEstimating] = useState(false);
+  const [isBridgeCompleted, setIsBridgeCompleted] = useState(false);
+  const [previousDestinationBalance, setPreviousDestinationBalance] = useState<bigint | null>(null);
+  const [isBridgeProcessing, setIsBridgeProcessing] = useState(false);
+  const [recipientAddress, setRecipientAddress] = useState("");
+  const [sendToSelf, setSendToSelf] = useState(true);
 
   // Get source token balance
   const {
@@ -82,14 +97,30 @@ const Bridge = () => {
     error: destinationBalanceError,
     refetch: refetchDestinationBalance,
   } = useBalance({
-    address: address,
+    address: (sendToSelf ? address : recipientAddress) as `0x${string}`,
     token: destinationToken?.address as `0x${string}`,
     chainId: toNetwork.chainId,
     query: {
-      enabled: !!address && !!destinationToken?.address,
-      refetchInterval: 10000,
+      enabled: !!(sendToSelf ? address : (recipientAddress && isValidAddress(recipientAddress))) && !!destinationToken?.address,
+      refetchInterval: 5000, // Reduced interval to catch balance updates faster
     },
   });
+
+  const handleInputMaxBalance = () => {
+    if (!sourceTokenBalance) {
+      toast.error("Unable to fetch balance");
+      return;
+    }
+
+    try {
+      const maxBalance = formatUnits(sourceTokenBalance.value, sourceTokenBalance.decimals);
+      const formattedMaxBalance = parseFloat(maxBalance).toFixed(6);
+      handleSendAmountChange(formattedMaxBalance);
+    } catch (error) {
+      console.error("Error setting max balance:", error);
+      toast.error("Error setting max balance");
+    }
+  };
 
   // Load available tokens when network changes
   useEffect(() => {
@@ -113,6 +144,29 @@ const Bridge = () => {
       setAvailableTokens([]);
     }
   }, [fromNetwork, getAvailableTokens, selectedToken]);
+
+  // Enhanced bridge completion detection
+  useEffect(() => {
+    if (destinationTokenBalance && isBridgeCompleted) {
+      console.log("🔍 Checking bridge completion:", {
+        currentBalance: destinationTokenBalance.value.toString(),
+        previousBalance: previousDestinationBalance?.toString(),
+        isBridgeCompleted
+      });
+
+      // Check if balance has increased from previous balance
+      if (previousDestinationBalance !== null && 
+          destinationTokenBalance.value > previousDestinationBalance) {
+        console.log("✅ Bridge completed - balance increased!");
+        // Balance updated - bridge is complete
+        toast.success("Bridge completed successfully! Tokens received.");
+        setIsBridgeCompleted(false);
+        setPreviousDestinationBalance(null);
+        setIsBridgeProcessing(false);
+        resetStatus();
+      }
+    }
+  }, [destinationTokenBalance, isBridgeCompleted, previousDestinationBalance, resetStatus]);
 
   // Update destination token when source token or networks change
   useEffect(() => {
@@ -140,33 +194,6 @@ const Bridge = () => {
     }
   }, [selectedToken, fromNetwork, toNetwork, getDestinationToken]);
 
-  // Debug logging
-  useEffect(() => {
-    console.log("=== BRIDGE DEBUG INFO ===");
-    console.log("From Network:", fromNetwork);
-    console.log("To Network:", toNetwork);
-    console.log("Selected Token:", selectedToken);
-    console.log("Destination Token:", destinationToken);
-    console.log("Available Tokens:", availableTokens);
-    console.log("Source Balance:", sourceTokenBalance);
-    console.log("Destination Balance:", destinationTokenBalance);
-    console.log(
-      "Can Bridge:",
-      selectedToken
-        ? canBridgeToken(selectedToken.symbol, fromNetwork.key, toNetwork.key)
-        : false
-    );
-  }, [
-    fromNetwork,
-    toNetwork,
-    selectedToken,
-    destinationToken,
-    availableTokens,
-    sourceTokenBalance,
-    destinationTokenBalance,
-    canBridgeToken,
-  ]);
-
   // Refetch balances when networks or tokens change
   useEffect(() => {
     if (address) {
@@ -182,6 +209,15 @@ const Bridge = () => {
     refetchSourceBalance,
     refetchDestinationBalance,
   ]);
+
+  // Reset states when toggling send to self
+  useEffect(() => {
+    setIsBridgeProcessing(false);
+    setIsBridgeCompleted(false);
+    setPreviousDestinationBalance(null);
+    resetStatus();
+    refetchDestinationBalance();
+  }, [sendToSelf, recipientAddress, resetStatus, refetchDestinationBalance]);
 
   // Close all dropdowns when clicking outside
   useEffect(() => {
@@ -216,6 +252,9 @@ const Bridge = () => {
     setSendAmount("");
     setReceiveAmount("");
     setEstimatedFee("");
+    setIsBridgeProcessing(false);
+    setIsBridgeCompleted(false);
+    setPreviousDestinationBalance(null);
     resetStatus();
   };
 
@@ -227,6 +266,9 @@ const Bridge = () => {
     setReceiveAmount("");
     setEstimatedFee("");
     setIsTokenDropdownOpen(false);
+    setIsBridgeProcessing(false);
+    setIsBridgeCompleted(false);
+    setPreviousDestinationBalance(null);
     resetStatus();
   };
 
@@ -238,6 +280,9 @@ const Bridge = () => {
     setReceiveAmount("");
     setEstimatedFee("");
     setIsFromDropdownOpen(false);
+    setIsBridgeProcessing(false);
+    setIsBridgeCompleted(false);
+    setPreviousDestinationBalance(null);
     resetStatus();
   };
 
@@ -248,6 +293,9 @@ const Bridge = () => {
     setReceiveAmount("");
     setEstimatedFee("");
     setIsToDropdownOpen(false);
+    setIsBridgeProcessing(false);
+    setIsBridgeCompleted(false);
+    setPreviousDestinationBalance(null);
     resetStatus();
   };
 
@@ -283,12 +331,11 @@ const Bridge = () => {
           amount: sendAmount,
           sourceChain: fromNetwork.key,
           destinationChain: toNetwork.key,
-          receiverAddress: useCustomRecipient && recipientAddress ? recipientAddress : address,
+          receiverAddress: sendToSelf ? address : recipientAddress,
           feeType: feeType,
         };
 
         const fee = await estimateFee(bridgeParams);
-        console.log("Estimated fee:", fee);
         setEstimatedFee(formatEther(fee));
       } catch (error) {
         console.error("Error estimating fee:", error);
@@ -336,6 +383,11 @@ const Bridge = () => {
       return;
     }
 
+    if (!sendToSelf && (!recipientAddress || !isValidAddress(recipientAddress))) {
+      toast.warning("Please enter a valid recipient address");
+      return;
+    }
+
     // Check if we need to switch networks
     if (chain?.id !== fromNetwork.chainId) {
       try {
@@ -347,6 +399,16 @@ const Bridge = () => {
       }
     }
 
+    // Store current destination balance before bridging
+    if (destinationTokenBalance) {
+      setPreviousDestinationBalance(destinationTokenBalance.value);
+      console.log("💾 Stored previous balance:", destinationTokenBalance.value.toString());
+    }
+
+    // Set bridge processing state
+    setIsBridgeProcessing(true);
+    setIsBridgeCompleted(false);
+    
     // Reset previous status
     resetStatus();
 
@@ -359,23 +421,36 @@ const Bridge = () => {
         amount: sendAmount,
         sourceChain: fromNetwork.key,
         destinationChain: toNetwork.key,
-        receiverAddress: address,
+        receiverAddress: sendToSelf ? address : recipientAddress,
         feeType: feeType,
       };
 
       const result = await bridgeTokens(bridgeParams);
+      console.log("Bridge result:", result);
 
-      if (result.messageId) {
-        toast.success(`Bridge successful! Message ID: ${result.messageId}`);
+      if (result?.messageId || result?.hash) {
+        // Show initial success message for transaction submission
+        toast.success("Bridge transaction submitted successfully!");
+        console.log("🚀 Bridge transaction submitted, waiting for completion...");
+        
+        // Mark bridge as waiting for completion
+        setIsBridgeCompleted(true);
+        
+        // Start monitoring for balance updates
+        refetchDestinationBalance();
       } else {
-        toast.success(`Bridge transaction sent! Hash: ${result.hash}`);
+        throw new Error("No transaction hash or message ID received");
       }
     } catch (error) {
       console.error("Bridge failed:", error);
       toast.error(
-        `Bridge failed: ${error instanceof Error ? error.message : "Unknown error"
-        }`
+        `Bridge failed: ${error instanceof Error ? error.message : "Unknown error"}`
       );
+      
+      // Reset states on error
+      setIsBridgeProcessing(false);
+      setIsBridgeCompleted(false);
+      setPreviousDestinationBalance(null);
     }
   };
 
@@ -576,27 +651,19 @@ const Bridge = () => {
                     <div className="flex flex-col gap-5">
                       <div className="flex flex-col gap-8">
                         {/* Bridge Status */}
+                        {isBridgeProcessing && isBridgeCompleted && (
+                          <div className="p-3 bg-yellow-100 rounded-lg text-yellow-800">
+                            <p className="m-0 text-sm">
+                              Bridge transaction submitted! Waiting for tokens to arrive...
+                            </p>
+                          </div>
+                        )}
+
                         {bridgeStatus.isLoading && (
                           <div className="p-3 bg-blue-100 rounded-lg text-blue-800">
                             <p className="m-0 text-sm">
                               Processing bridge transaction...
                             </p>
-                          </div>
-                        )}
-
-                        {bridgeStatus.success && (
-                          <div className="p-3 bg-green-100 rounded-lg text-green-800">
-                            <p className="m-0 text-sm">Bridge successful!</p>
-                            {bridgeStatus.messageId && (
-                              <p className="m-0 text-xs mt-1">
-                                Message ID: {bridgeStatus.messageId}
-                              </p>
-                            )}
-                            {bridgeStatus.txHash && (
-                              <p className="m-0 text-xs mt-1">
-                                Transaction: {bridgeStatus.txHash}
-                              </p>
-                            )}
                           </div>
                         )}
 
@@ -636,6 +703,22 @@ const Bridge = () => {
                                   {selectedToken?.symbol}
                                 </p>
                               )}
+                              {address && !sourceBalanceLoading && !sourceBalanceError && sourceTokenBalance && (
+                                <div className="mt-2">
+                                  <button
+                                    onClick={handleInputMaxBalance}
+                                    disabled={
+                                      isBridgeProcessing ||
+                                      bridgeStatus.isLoading ||
+                                      chain?.id !== fromNetwork.chainId
+                                    }
+                                    className="px-3 py-1 text-xs bg-blue-500 text-white rounded hover:bg-blue-600 transition-colors disabled:bg-gray-400 disabled:cursor-not-allowed"
+                                  >
+                                    Max
+                                  </button>
+                                </div>
+                              )}
+
                             </div>
                             <div className="right">
                               <TokenDropdown
@@ -710,43 +793,57 @@ const Bridge = () => {
                             </div>
                           </div>
                         </div>
-                      </div>
-                      <div className="flex flex-col gap-3">
-                        <div className="flex items-center gap-3">
-                          <label className="m-0 text-[#E2E2E2] font-medium">
-                            Recipient
-                          </label>
-                          <div className="flex items-center gap-2">
-                            <input
-                              type="checkbox"
-                              id="customRecipient"
-                              checked={useCustomRecipient}
-                              onChange={(e) => {
-                                setUseCustomRecipient(e.target.checked);
-                                if (!e.target.checked) {
-                                  setRecipientAddress("");
-                                }
-                              }}
-                              className="w-4 h-4"
-                            />
-                            <label htmlFor="customRecipient" className="text-xs text-gray-400">
-                              Send to different address
-                            </label>
-                          </div>
-                        </div>
-                        <div className="p-3 rounded-[10px] bg-[#060708]/30">
-                          <p className="m-0 text-xs mb-2">Recipient Address</p>
-                          <input
-                            type="text"
-                            placeholder={useCustomRecipient ? "Enter recipient address (0x...)" : address || "Connect wallet"}
-                            value={useCustomRecipient ? recipientAddress : address || ""}
-                            onChange={(e) => useCustomRecipient && setRecipientAddress(e.target.value)}
-                            disabled={!useCustomRecipient}
-                            className="w-full border-0 p-2 text-sm bg-transparent outline-0 text-white placeholder:text-gray-400 disabled:opacity-50"
-                          />
-                        </div>
-                      </div>
 
+                        {/* Recipient Address Section */}
+                        <div className="flex flex-col gap-3">
+                          <div className="flex items-center gap-3">
+                            <label className="m-0 text-[#E2E2E2] font-medium">
+                              Send To
+                            </label>
+                            <div className="flex gap-2">
+                              <button
+                                type="button"
+                                onClick={() => setSendToSelf(true)}
+                                className={`px-3 py-1 rounded text-xs ${
+                                  sendToSelf
+                                    ? "bg-blue-500 text-white"
+                                    : "bg-gray-200 text-gray-700"
+                                }`}
+                              >
+                                My Wallet
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setSendToSelf(false)}
+                                className={`px-3 py-1 rounded text-xs ${
+                                  !sendToSelf
+                                    ? "bg-blue-500 text-white"
+                                    : "bg-gray-200 text-gray-700"
+                                }`}
+                              >
+                                Other Address
+                              </button>
+                            </div>
+                          </div>
+                          {!sendToSelf && (
+                            <div className="p-3 rounded-[10px] bg-[#060708]/30">
+                              <p className="m-0 text-xs mb-2">Recipient Address</p>
+                              <input
+                                type="text"
+                                placeholder="0x..."
+                                value={recipientAddress}
+                                onChange={(e) => setRecipientAddress(e.target.value)}
+                                className="w-full border-0 p-2 text-sm bg-transparent border border-gray-600 rounded outline-0 text-white placeholder:text-gray-400 focus:border-blue-500"
+                              />
+                              {recipientAddress && !isValidAddress(recipientAddress) && (
+                                <p className="m-0 text-xs text-red-500 mt-1">
+                                  Invalid address format
+                                </p>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      </div>
                       {/* Bridge Details */}
                       <div className="px-5">
                         <div className="flex flex-col gap-1">
@@ -775,17 +872,17 @@ const Bridge = () => {
                               <span className="icn">{infoIcn}</span>
                             </p>
                             <p className="m-0 flex items-center gap-2 text-xs">
-                              ~5-10 minutes
+                              {fromNetwork?.name === "Avalanche Fuji" || fromNetwork?.name === "BSC Testnet" ? "2-3 mins" : "5-10 mins"}
                             </p>
                           </div>
-                          <div className="flex items-center justify-between">
+                          {/* <div className="flex items-center justify-between">
                             <p className="m-0 flex items-center gap-2 text-xs">
                               Bridge Rate
                             </p>
                             <p className="m-0 flex items-center gap-2 text-xs">
                               1:1
                             </p>
-                          </div>
+                          </div> */}
                         </div>
                       </div>
 
@@ -802,7 +899,7 @@ const Bridge = () => {
                             !isBridgingPossible ||
                             bridgeStatus.isLoading ||
                             chain?.id !== fromNetwork.chainId ||
-                            (useCustomRecipient && (!recipientAddress || !recipientAddress.match(/^0x[a-fA-F0-9]{40}$/)))
+                            (!sendToSelf && (!recipientAddress || !isValidAddress(recipientAddress)))
                           }
                         >
                           {!address
@@ -811,11 +908,9 @@ const Bridge = () => {
                               ? `Switch to ${fromNetwork.name}`
                               : !isBridgingPossible
                                 ? "Token Not Bridgeable"
-                                : useCustomRecipient && (!recipientAddress || !recipientAddress.match(/^0x[a-fA-F0-9]{40}$/))
-                                  ? "Invalid Recipient Address"
-                                  : bridgeStatus.isLoading
-                                    ? "Processing..."
-                                    : "Bridge Tokens"}
+                                : bridgeStatus.isLoading
+                                  ? "Processing..."
+                                  : "Bridge Tokens"}
                         </button>
                       </div>
                     </div>
