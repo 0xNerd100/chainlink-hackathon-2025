@@ -182,7 +182,7 @@ const Metrics = () => {
                     <div className="inner p-5 h-full">
                       <div className="top flex items-center justify-between gap-3 pb-5 flex-wrap">
                         <h4 className="m-0 font 2xl:text-[30px] text-[24px]">
-                          RAWL APY
+                          RWAL APY
                         </h4>
                         <p className="m-0 md:text-[14px] text-xs">
                           Updated April 24, 2025

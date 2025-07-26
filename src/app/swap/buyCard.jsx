@@ -274,7 +274,7 @@ const BuyCard = () => {
         address: BOOTSTRAP_ADDRESS,
         abi: BOOTSTRAP_ABI,
         functionName: "buy",
-        args: [amountInWei],
+        args: [amountInWei, address],
       });
     } catch (error) {
       console.error("Buy failed:", error);
@@ -424,7 +424,7 @@ const BuyCard = () => {
                         {usdcBalanceLoading
                           ? "Loading..."
                           : usdcBalanceError
-                            ? "Error loading balance"
+                            ? "Balance: -"
                             : `Balance: ${formatBalance(usdcBalance)} USDC`}
                       </p>
                       {!usdcBalanceLoading && !usdcBalanceError && usdcBalance && (
@@ -472,7 +472,7 @@ const BuyCard = () => {
                       {usdlBalanceLoading
                         ? "Loading..."
                         : usdlBalanceError
-                          ? "Error loading balance"
+                          ? "Balance: -"
                           : `Balance: ${formatBalance(usdlBalance)} USDL`}
                     </p>
                   )}

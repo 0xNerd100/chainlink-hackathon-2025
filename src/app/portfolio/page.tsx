@@ -30,7 +30,7 @@ const Portfolio = () => {
             <div className="col-span-12">
               <div className="head border-b border-white pb-2 mb-4">
                 <h4 className="m-0 2xl:text-[22px] text-[18px]">
-                  RAWL Token Balances
+                  RWAL  Token Balances
 
                 </h4>
               </div>

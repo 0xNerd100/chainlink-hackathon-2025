@@ -443,7 +443,7 @@ const switchTokens = () => {
                         {fromTokenBalanceLoading
                           ? "Loading..."
                           : fromTokenBalanceError
-                            ? `Error: ${fromTokenBalanceError.message}`
+                            ? `Balance: -`
                             : `Balance: ${formatBalance(fromTokenBalance)} ${fromToken}`}
                       </p>
                       {!fromTokenBalanceLoading && !fromTokenBalanceError && fromTokenBalance && (
@@ -510,7 +510,7 @@ const switchTokens = () => {
                       {toTokenBalanceLoading
                         ? "Loading..."
                         : toTokenBalanceError
-                          ? `Error: ${toTokenBalanceError.message}`
+                          ? `Balance: - `
                           : `Balance: ${formatBalance(toTokenBalance)} ${toToken}`}
                     </p>
                   )}
